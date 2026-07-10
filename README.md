@@ -13,7 +13,7 @@
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-blue">
   <img alt="Python" src="https://img.shields.io/badge/Python-3.10%2B-blue">
   <img alt="License" src="https://img.shields.io/badge/License-MIT-green">
-  <img alt="UI" src="https://img.shields.io/badge/UI-HTML%20%2B%20pywebview-9b6dff">
+  <img alt="UI" src="https://img.shields.io/badge/UI-Native%20Desktop%20%2B%20CustomTkinter-ff4c98">
 </p>
 
 ---
@@ -119,8 +119,11 @@
 # 装依赖
 python -m pip install -r requirements.txt
 
-# 直接跑（默认 HTML 界面；加 --legacy 走旧的 customtkinter 界面）
+# 直接跑（默认原生 customtkinter 界面）
 python -m astral_party_auto
+
+# 可选：实验用 HTML 界面（依赖系统 .NET 运行库）
+python -m astral_party_auto --web
 
 # 打包成 exe
 powershell -ExecutionPolicy Bypass -File .\build_exe.ps1
@@ -153,7 +156,7 @@ powershell -ExecutionPolicy Bypass -File .\build_exe.ps1
 ## 致谢
 
 - [UnityPy](https://github.com/K0lb3/UnityPy) — 读写 Unity 资源
-- [pywebview](https://pywebview.flowrl.com/) — 桌面 HTML 外壳
-- [customtkinter](https://github.com/TomSchimansky/CustomTkinter) — 旧版界面
+- [customtkinter](https://github.com/TomSchimansky/CustomTkinter) — 默认原生桌面界面
+- [pywebview](https://pywebview.flowrl.com/) — 可选的实验 HTML 界面
 
 有问题开 Issue，PR 也欢迎，尽量小而清楚就行。

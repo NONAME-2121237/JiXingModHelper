@@ -25,24 +25,14 @@ def _run_legacy_ui() -> None:
 def main(argv: list[str] | None = None) -> None:
     _set_windows_app_id()
     args = list(sys.argv[1:] if argv is None else argv)
-    # 默认 HTML/pywebview；--legacy 走旧 customtkinter
-    if "--legacy" in args or "--ctk" in args:
-        _run_legacy_ui()
-        return
-    try:
+    # 默认原生界面：不依赖 pywebview/pythonnet，打包后更稳定。
+    # HTML 界面保留给开发调试；显式传 --web 才会启动。
+    if "--web" in args:
         from .web_app import main as web_main
 
         web_main()
-    except Exception as exc:
-        # 部分精简系统缺少 pywebview 所需 .NET 组件时，仍让工具可用。
-        from tkinter import messagebox
-
-        messagebox.showwarning(
-            "已切换兼容界面",
-            "HTML 界面启动失败，已自动切换为兼容界面。\n\n"
-            f"原因：{exc}",
-        )
-        _run_legacy_ui()
+        return
+    _run_legacy_ui()
 
 
 if __name__ == "__main__":
