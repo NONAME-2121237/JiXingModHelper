@@ -34,6 +34,20 @@ def _web_dir() -> Path:
 WEB_DIR = _web_dir()
 
 
+def _configure_frozen_pythonnet() -> None:
+    """让打包版的 pythonnet 明确使用随程序附带的 Python DLL。"""
+    if not getattr(sys, "frozen", False):
+        return
+    runtime_root = Path(
+        getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent)
+    )
+    python_dll = runtime_root / (
+        f"python{sys.version_info.major}{sys.version_info.minor}.dll"
+    )
+    if python_dll.exists():
+        os.environ.setdefault("PYTHONNET_PYDLL", str(python_dll))
+
+
 def _json_safe(value: Any) -> Any:
     if isinstance(value, Path):
         return str(value)
@@ -683,6 +697,7 @@ def _apply_windows_icon(window_title: str, ico_path: Path) -> None:
 
 
 def main() -> None:
+    _configure_frozen_pythonnet()
     import webview
 
     _set_windows_app_id()
