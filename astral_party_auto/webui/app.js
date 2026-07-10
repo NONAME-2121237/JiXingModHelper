@@ -35,6 +35,9 @@
     pendingMod: null,
     replacement: null,
     busy: false,
+    modBundles: [],
+    modBundleActive: "",
+    modPreviewTitle: "",
   };
 
   const $ = (sel, root = document) => root.querySelector(sel);
@@ -170,20 +173,78 @@
     });
   }
 
+  function setModPreviewPanel(title, bundles, firstPreview) {
+    state.modPreviewTitle = title || "";
+    state.modBundles = bundles || [];
+    state.modBundleActive = (firstPreview && firstPreview.bundle) || state.modBundles[0] || "";
+    const titleEl = $("#mod-preview-title");
+    if (titleEl) {
+      titleEl.textContent = state.modPreviewTitle
+        ? `${state.modPreviewTitle}（${state.modBundles.length} 个包，点左侧看图）`
+        : "选待装包或点已装「预览」后，左侧点资源包看图。";
+    }
+    renderModBundleList();
+    if (firstPreview) {
+      showModBundlePreview(firstPreview);
+    } else if (state.modBundleActive) {
+      previewModBundle(state.modBundleActive);
+    } else {
+      showModBundlePreview(null);
+    }
+  }
+
+  function renderModBundleList() {
+    const list = $("#mod-bundle-list");
+    if (!list) return;
+    list.innerHTML = "";
+    if (!state.modBundles.length) {
+      list.innerHTML = `<div class="notice">暂无资源包列表</div>`;
+      return;
+    }
+    state.modBundles.forEach((name) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "mod-bundle-item" + (name === state.modBundleActive ? " is-active" : "");
+      btn.textContent = name;
+      btn.title = name;
+      btn.addEventListener("click", () => previewModBundle(name));
+      list.appendChild(btn);
+    });
+  }
+
+  function showModBundlePreview(data) {
+    const cap = $("#mod-preview-caption");
+    const media = $("#mod-preview-media");
+    if (!data || !data.preview_data) {
+      if (cap) cap.textContent = (data && data.message) || "选左侧一项看图";
+      if (media) media.innerHTML = "<span>—</span>";
+      return;
+    }
+    if (cap) {
+      const bits = [data.texture || data.bundle || "", data.size || ""].filter(Boolean);
+      cap.textContent = bits.join(" · ");
+    }
+    if (media) media.innerHTML = `<img src="${data.preview_data}" alt="mod preview">`;
+  }
+
+  async function previewModBundle(bundleName) {
+    state.modBundleActive = bundleName;
+    renderModBundleList();
+    try {
+      const data = await call("preview_mod_bundle", { busy: true, busyText: "加载预览…" }, bundleName);
+      showModBundlePreview(data);
+    } catch (_) {
+      showModBundlePreview({ message: "预览失败" });
+    }
+  }
+
   async function previewInstalled(name) {
     try {
-      const data = await call("preview_installed_mod", { busy: true, busyText: "加载预览…" }, name);
-      const box = $("#installed-preview");
-      box.classList.remove("is-hidden");
-      $("#installed-preview-title").textContent = name;
-      $("#installed-preview-meta").textContent = `${data.texture || ""} ${data.size || ""}`.trim();
-      const img = $("#installed-preview-image");
-      if (data.preview_data) {
-        img.src = data.preview_data;
-        img.classList.remove("is-hidden");
-      } else {
-        img.removeAttribute("src");
-      }
+      const data = await call("load_mod_preview", { busy: true, busyText: "加载 Mod 预览…" }, name);
+      setModPreviewPanel(data.title || `已装 · ${name}`, data.bundles || [], data.first || null);
+      toast(`已加载预览：${name}`);
+      // 滚到预览区
+      $("#mod-bundle-list")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
     } catch (_) {}
   }
 
@@ -675,7 +736,11 @@
       const box = $("#mod-analysis");
       box.textContent = `已选：${data.name}\n路径：${data.path}\n可装 ${data.matched} / 共 ${data.total}（跳过 ${data.unmatched}）`;
       $("#install-mod").disabled = !(data.matched > 0);
-      toast(`分析完成：可装 ${data.matched} 个包`);
+      setModPreviewPanel(data.preview_title || `待装 · ${data.name}`, data.bundles || [], null);
+      if (data.bundles && data.bundles.length) {
+        await previewModBundle(data.bundles[0]);
+      }
+      toast(`分析完成：可装 ${data.matched} 个包，可点下方列表预览`);
     } catch (_) {}
   }
 
@@ -686,7 +751,11 @@
       state.dashboard = data.dashboard || state.dashboard;
       state.pendingMod = null;
       $("#install-mod").disabled = true;
-      $("#mod-analysis").textContent = `已安装「${data.name}」：替换 ${data.matched} 个包。`;
+      $("#mod-analysis").textContent = `已安装「${data.name}」：替换 ${data.matched} 个包。下方可继续预览。`;
+      if (data.bundles && data.bundles.length) {
+        setModPreviewPanel(data.preview_title || `已装 · ${data.name}`, data.bundles, null);
+        await previewModBundle(data.bundles[0]);
+      }
       renderInstalled();
       renderDashboard();
       toast(`安装完成：${data.name}`);

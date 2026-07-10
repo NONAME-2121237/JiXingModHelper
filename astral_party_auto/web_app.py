@@ -69,6 +69,9 @@ class DesktopApi:
         self._image_cache: dict[tuple, str] = {}
         self._pending_mod_path: Path | None = None
         self._replacement_path: Path | None = None
+        # Mod 管理预览：{bundle文件名: Path}
+        self._mod_preview_files: dict[str, Path] = {}
+        self._mod_preview_title: str = ""
         self.controller = ModController(self._append_log)
 
     def attach_window(self, window) -> None:
@@ -221,6 +224,11 @@ class DesktopApi:
     def get_installed_mods(self) -> list[dict]:
         return self.controller.installed_mods()
 
+    def _set_mod_preview_files(self, files: dict[str, Path], title: str) -> list[str]:
+        self._mod_preview_files = dict(files)
+        self._mod_preview_title = title
+        return sorted(self._mod_preview_files.keys())
+
     @exposed
     def choose_mod(self, mode: str) -> dict | None:
         import webview
@@ -238,12 +246,21 @@ class DesktopApi:
             return None
         analysis = self.controller.analyze(path)
         self._pending_mod_path = path
+        name = path.stem if path.is_file() else path.name
+        # 可装的包优先列入预览列表
+        if analysis.matched:
+            files = {n: analysis.files_map[n] for n in analysis.matched if n in analysis.files_map}
+        else:
+            files = dict(analysis.files_map)
+        bundles = self._set_mod_preview_files(files, f"待装 · {name}")
         return {
             "path": str(path),
-            "name": path.stem if path.is_file() else path.name,
+            "name": name,
             "total": analysis.total,
             "matched": len(analysis.matched),
             "unmatched": len(analysis.unmatched),
+            "preview_title": self._mod_preview_title,
+            "bundles": bundles,
         }
 
     @exposed
@@ -254,12 +271,20 @@ class DesktopApi:
         name = source.stem if source.is_file() else source.name
         analysis = self.controller.install(source, name=name)
         self._pending_mod_path = None
+        # 装完后从 mod_store 继续预览
+        store = DATA_DIR / "mod_store" / name
+        bundles: list[str] = []
+        if store.exists():
+            files = {p.name: p for p in sorted(store.glob("*.bundle"))}
+            bundles = self._set_mod_preview_files(files, f"已装 · {name}")
         return {
             "name": name,
             "matched": len(analysis.matched),
             "unmatched": len(analysis.unmatched),
             "installed": self.controller.installed_mods(),
             "dashboard": self._dashboard_state(),
+            "preview_title": self._mod_preview_title,
+            "bundles": bundles,
         }
 
     @exposed
@@ -270,12 +295,15 @@ class DesktopApi:
             count = self.controller.disable_mod(name)
         elif action == "uninstall":
             count = self.controller.uninstall(name)
+            if self._mod_preview_title.endswith(name) or name in self._mod_preview_title:
+                self._mod_preview_files = {}
+                self._mod_preview_title = ""
         else:
             raise RuntimeError(f"不支持的操作：{action}")
         return {"changed": count, "installed": self.controller.installed_mods(), "dashboard": self._dashboard_state()}
 
-    @exposed
-    def preview_installed_mod(self, name: str) -> dict:
+    def _load_mod_preview_impl(self, name: str) -> dict:
+        """点已装 Mod「预览」：列出该 mod 全部资源包，供左侧点选看图。"""
         manager = self.controller.manager
         if manager is None:
             raise RuntimeError("没有检测到游戏。")
@@ -283,26 +311,90 @@ class DesktopApi:
         info = state.get("mods", {}).get(name)
         if not info:
             raise RuntimeError("找不到该 Mod 的安装记录。")
-        candidates: list[Path] = []
+        file_names = list(info.get("files") or [])
         store = Path(info.get("store") or (DATA_DIR / "mod_store" / name))
+        files: dict[str, Path] = {}
         if store.exists():
-            candidates.extend(sorted(store.glob("*.bundle")))
-        if not candidates and self.controller.aa_dir:
-            candidates.extend(
-                self.controller.aa_dir / filename
-                for filename in info.get("files", [])
-                if (self.controller.aa_dir / filename).exists()
-            )
-        if not candidates:
-            raise RuntimeError("该 Mod 没有可预览的资源包。")
-        bundle = candidates[0]
-        names = self.controller.list_bundle_texture_names(bundle)
-        preview, texture_info = self.controller.preview_mod_bundle(bundle, names[0] if names else None)
+            files = {p.name: p for p in store.glob("*.bundle")}
+        aa = self.controller.aa_dir
+        if not files and aa and file_names:
+            store.mkdir(parents=True, exist_ok=True)
+            import shutil
+
+            for fname in file_names:
+                src = aa / fname
+                if not src.exists():
+                    continue
+                dst = store / fname
+                try:
+                    shutil.copy2(src, dst)
+                    files[fname] = dst
+                except OSError:
+                    files[fname] = src
+            info["store"] = str(store)
+            state["mods"][name] = info
+            manager._save_state(state)
+        if not files and aa and file_names:
+            for fname in file_names:
+                p = aa / fname
+                if p.exists():
+                    files[fname] = p
+        if not files:
+            raise RuntimeError("没有可预览的文件。请重新安装该 mod。")
+        bundles = self._set_mod_preview_files(files, f"已装 · {name}")
+        first = bundles[0] if bundles else ""
+        first_preview = self._preview_mod_bundle_impl(first) if first else None
         return {
-            "bundle": bundle.name,
-            "texture": texture_info.name if texture_info else "",
+            "title": self._mod_preview_title,
+            "name": name,
+            "bundles": bundles,
+            "first": first_preview,
+        }
+
+    def _preview_mod_bundle_impl(self, bundle_name: str) -> dict:
+        """预览当前预览会话中某个资源包的第一张贴图。"""
+        path = self._mod_preview_files.get(bundle_name)
+        if path is None or not Path(path).exists():
+            raise RuntimeError(f"找不到资源包：{bundle_name}")
+        names = self.controller.list_bundle_texture_names(path)
+        if not names:
+            return {
+                "bundle": bundle_name,
+                "texture": "",
+                "size": "",
+                "preview_data": "",
+                "message": "包内无可预览贴图",
+            }
+        preview, texture_info = self.controller.preview_mod_bundle(path, names[0])
+        return {
+            "bundle": bundle_name,
+            "texture": texture_info.name if texture_info else names[0],
             "size": f"{texture_info.width}×{texture_info.height}" if texture_info else "",
             "preview_data": self._image_data(preview),
+            "message": "",
+        }
+
+    @exposed
+    def load_mod_preview(self, name: str) -> dict:
+        return self._load_mod_preview_impl(name)
+
+    @exposed
+    def preview_mod_bundle(self, bundle_name: str) -> dict:
+        return self._preview_mod_bundle_impl(bundle_name)
+
+    @exposed
+    def preview_installed_mod(self, name: str) -> dict:
+        """兼容旧调用：加载列表并返回第一张预览。"""
+        data = self._load_mod_preview_impl(name)
+        first = data.get("first") or {}
+        return {
+            "bundle": first.get("bundle", ""),
+            "texture": first.get("texture", ""),
+            "size": first.get("size", ""),
+            "preview_data": first.get("preview_data", ""),
+            "title": data.get("title", ""),
+            "bundles": data.get("bundles", []),
+            "name": name,
         }
 
     @exposed
