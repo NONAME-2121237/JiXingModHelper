@@ -39,9 +39,9 @@
 | 类型 | 状态 | 能干嘛 |
 |------|------|--------|
 | **贴图**（卡面 / 立绘 / 图标 / 筹码…） | ✅ **稳定** | 预览、替换、导出 PNG/JPG——**主力功能，就用它** |
-| 文本 | 🧪 实验性 | 能读能改，但不保证每个包都成，装了不一定生效 |
-| 动画 | 🧪 实验性 | 首帧预览 + 二进制替换，能试，别指望完美 |
-| 3D 模型 | 👁 只读 | 只能导出 OBJ 看看，**不能替换** |
+| 文本 | 🧪 实验性 | - |
+| 动画 | 🧪 实验性 | - |
+| 3D 模型 | 👁 只读 | - |
 
 一句话：**现在稳的是换贴图，其它先当尝鲜。** 别急着拿文本/动画去做正式 mod。
 
@@ -62,7 +62,7 @@
 
 ## 快速开始
 
-**要什么**：Windows 10/11、装了 Steam 版《吉星派对》。不用装 Python，不用点任何 `.cmd`。
+**要什么**：Windows 10/11、装了 Steam 版《吉星派对》。不用装 Python。
 
 **怎么用**：去 [Releases](https://github.com/kldsjfas/JiXingModHelper/releases) 下最新那个压缩包，解压，双击 `JiXingModHelper.exe`。
 
@@ -126,7 +126,7 @@ python -m astral_party_auto
 powershell -ExecutionPolicy Bypass -File .\build_exe.ps1
 ```
 
-打包产物在 `dist\JiXingModHelper\`，双击 exe 启动、没有黑窗。
+打包产物在 `dist\JiXingModHelper\`，双击 exe 启动。
 
 ---
 
@@ -145,7 +145,7 @@ powershell -ExecutionPolicy Bypass -File .\build_exe.ps1
 
 ## 说在前面
 
-改的是你本机的游戏资源文件（有备份、能还原）。用第三方资源和改游戏文件本身就有风险，出了问题（版本不兼容、存档、封号之类）我这边兜不了，自己拿捏。
+改的是你本机的游戏资源文件（有备份、能还原），联机别人是看不见的，只能本地过过眼瘾。
 
 ## 许可
 
