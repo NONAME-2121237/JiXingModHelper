@@ -18,7 +18,7 @@
 
 ---
 
-给 Steam 版《**吉星派对**》（曾用名 **星引擎 Party / Astral Party**）用的本地换皮工具。
+给 Steam 版《**吉星派对**》（ **星引擎 Party / Astral Party**）用的本地换皮工具。
 
 ## 为什么做这个
 
