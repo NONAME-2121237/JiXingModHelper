@@ -13,7 +13,7 @@
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-blue">
   <img alt="Python" src="https://img.shields.io/badge/Python-3.10%2B-blue">
   <img alt="License" src="https://img.shields.io/badge/License-MIT-green">
-  <img alt="UI" src="https://img.shields.io/badge/UI-Native%20Desktop%20%2B%20CustomTkinter-ff4c98">
+  <img alt="UI" src="https://img.shields.io/badge/UI-HTML%20%2B%20WebView2-9b6dff">
 </p>
 
 ---
@@ -119,11 +119,11 @@
 # 装依赖
 python -m pip install -r requirements.txt
 
-# 直接跑（默认原生 customtkinter 界面）
+# 直接跑（默认 HTML 前端，由原生 WebView2 窗口承载）
 python -m astral_party_auto
 
-# 可选：实验用 HTML 界面（依赖系统 .NET 运行库）
-python -m astral_party_auto --web
+# 可选：回退原项目的 customtkinter 界面
+python -m astral_party_auto --legacy
 
 # 打包成 exe
 powershell -ExecutionPolicy Bypass -File .\build_exe.ps1
@@ -156,7 +156,7 @@ powershell -ExecutionPolicy Bypass -File .\build_exe.ps1
 ## 致谢
 
 - [UnityPy](https://github.com/K0lb3/UnityPy) — 读写 Unity 资源
-- [customtkinter](https://github.com/TomSchimansky/CustomTkinter) — 默认原生桌面界面
-- [pywebview](https://pywebview.flowrl.com/) — 可选的实验 HTML 界面
+- [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/) — C# 原生窗口与 HTML 前端容器
+- [customtkinter](https://github.com/TomSchimansky/CustomTkinter) — 可选的兼容界面
 
 有问题开 Issue，PR 也欢迎，尽量小而清楚就行。

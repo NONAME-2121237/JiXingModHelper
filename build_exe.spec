@@ -17,31 +17,27 @@ datas = [
     (str(ROOT / "assets"), "assets"),
     (str(ROOT / "icon.ico"), "."),
     (str(ROOT / "icon.png"), "."),
+    (str(ROOT / "native_host" / "publish"), "native_host"),
 ]
 binaries = []
 hiddenimports = [
     "astral_party_auto",
     "astral_party_auto.app",
+    "astral_party_auto.native_host_app",
     "astral_party_auto.web_app",
     "astral_party_auto.mod_controller",
     "astral_party_auto.ui.main_window",
-    "webview.platforms.edgechromium",
-    "webview.platforms.winforms",
     "bottle",
-    "proxy_tools",
-    "clr",
-    "clr_loader",
-    "pythonnet",
     "windnd",
 ]
 
 for pkg in (
-    "webview",
     "UnityPy",
     "customtkinter",
     "texture2ddecoder",
     "etcpak",
     "astc_encoder",
+    "archspec",  # astc_encoder 读图时需要 json/cpu 数据，漏了会预览报 No such file
     "fmod_toolkit",
     "PIL",
     "darkdetect",
@@ -51,13 +47,22 @@ for pkg in (
     binaries += b
     hiddenimports += h
 
-# 保险：整包拷贝 UnityPy（含 resources/lzma.tpk）
+# 保险：整包拷贝（含 tpk / archspec json）
 import UnityPy as _upy
+import archspec as _arch
 
-_upy_root = Path(_upy.__file__).resolve().parent
-datas.append((str(_upy_root), "UnityPy"))
+datas.append((str(Path(_upy.__file__).resolve().parent), "UnityPy"))
+datas.append((str(Path(_arch.__file__).resolve().parent), "archspec"))
+
+try:
+    import astc_encoder as _astc
+
+    datas.append((str(Path(_astc.__file__).resolve().parent), "astc_encoder"))
+except Exception:
+    pass
 
 hiddenimports += collect_submodules("UnityPy")
+hiddenimports += collect_submodules("archspec")
 hiddenimports = sorted(set(hiddenimports))
 
 a = Analysis(
@@ -69,25 +74,13 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=["pandas", "matplotlib", "scipy", "IPython", "notebook"],
+    excludes=[
+        "pandas", "matplotlib", "scipy", "IPython", "notebook",
+        "webview", "pythonnet", "clr", "clr_loader", "proxy_tools",
+    ],
     noarchive=False,
     optimize=0,
 )
-
-# 剔除 pythonnet/runtime 里的 coreclr facade（netstandard.dll / System.*.dll 等，约 90 多个）。
-# 打包版用 .NET Framework(netfx) 加载 Python.Runtime.dll，这些 coreclr facade 会冲突，
-# 导致 "Failed to resolve Python.Runtime.Loader.Initialize"，HTML 界面掉回卡顿的 Tk 兼容界面。
-_KEEP_IN_RT = {"python.runtime.dll", "python.runtime.xml"}
-
-
-def _drop_coreclr_facade(entry):
-    dest = str(entry[0]).replace("\\", "/").lower()
-    if "pythonnet/runtime/" in dest:
-        return dest.rsplit("/", 1)[-1] in _KEEP_IN_RT
-    return True
-
-
-a.datas = [entry for entry in a.datas if _drop_coreclr_facade(entry)]
 
 pyz = PYZ(a.pure)
 
