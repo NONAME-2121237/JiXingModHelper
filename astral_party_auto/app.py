@@ -29,9 +29,9 @@ def main(argv: list[str] | None = None) -> None:
     if "--legacy" in args or "--ctk" in args:
         _run_legacy_ui()
         return
-    from .web_app import main as web_main
-
     try:
+        from .web_app import main as web_main
+
         web_main()
     except Exception as exc:
         # 部分精简系统缺少 pywebview 所需 .NET 组件时，仍让工具可用。

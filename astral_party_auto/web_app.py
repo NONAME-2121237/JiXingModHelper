@@ -35,17 +35,21 @@ WEB_DIR = _web_dir()
 
 
 def _configure_frozen_pythonnet() -> None:
-    """让打包版的 pythonnet 明确使用随程序附带的 Python DLL。"""
+    """打包版：强制用 Windows 自带的 .NET Framework(netfx)，并指向随程序的 Python DLL。
+
+    不设 netfx，pythonnet 3.x 会去找 .NET Core，精简系统上直接崩。netfx（4.7.2+）Win10/11 一定有。
+    另外 build_exe.spec 会把 pythonnet/runtime 里的 coreclr facade（netstandard/System.*）剔掉，
+    否则 netfx 加载 Python.Runtime.dll 时和这些 facade 冲突，报 Loader.Initialize 失败。
+    """
     if not getattr(sys, "frozen", False):
         return
-    runtime_root = Path(
-        getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent)
-    )
-    python_dll = runtime_root / (
-        f"python{sys.version_info.major}{sys.version_info.minor}.dll"
-    )
-    if python_dll.exists():
-        os.environ.setdefault("PYTHONNET_PYDLL", str(python_dll))
+    os.environ.setdefault("PYTHONNET_RUNTIME", "netfx")
+    runtime_root = Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent))
+    for base in {runtime_root, runtime_root / "_internal", Path(sys.executable).resolve().parent}:
+        python_dll = base / f"python{sys.version_info.major}{sys.version_info.minor}.dll"
+        if python_dll.exists():
+            os.environ.setdefault("PYTHONNET_PYDLL", str(python_dll))
+            break
 
 
 def _json_safe(value: Any) -> Any:

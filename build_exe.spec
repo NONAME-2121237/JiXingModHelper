@@ -74,6 +74,21 @@ a = Analysis(
     optimize=0,
 )
 
+# 剔除 pythonnet/runtime 里的 coreclr facade（netstandard.dll / System.*.dll 等，约 90 多个）。
+# 打包版用 .NET Framework(netfx) 加载 Python.Runtime.dll，这些 coreclr facade 会冲突，
+# 导致 "Failed to resolve Python.Runtime.Loader.Initialize"，HTML 界面掉回卡顿的 Tk 兼容界面。
+_KEEP_IN_RT = {"python.runtime.dll", "python.runtime.xml"}
+
+
+def _drop_coreclr_facade(entry):
+    dest = str(entry[0]).replace("\\", "/").lower()
+    if "pythonnet/runtime/" in dest:
+        return dest.rsplit("/", 1)[-1] in _KEEP_IN_RT
+    return True
+
+
+a.datas = [entry for entry in a.datas if _drop_coreclr_facade(entry)]
+
 pyz = PYZ(a.pure)
 
 exe = EXE(
