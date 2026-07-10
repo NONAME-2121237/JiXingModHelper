@@ -1,0 +1,71 @@
+"""星引擎（吉星派对）Mod 工具核心：读取 / 预览 / 替换 / 安装还原 Unity 资源包。
+
+全程只做本地资源文件替换，不注入进程、不碰反篡改。
+"""
+from .bundles import (
+    AA_SUBPATH,
+    aa_dir_for_exe,
+    build_asset_index,
+    build_texture_index,
+    extract_texture_png,
+    load_asset_index,
+    load_texture_index,
+    read_bundle_textures,
+)
+from .categories import (
+    ADVANCED_IDS,
+    ASSET_TYPES,
+    all_categories,
+    categorize,
+    category_desc,
+    category_label,
+    count_by_category,
+    describe_selection,
+    filter_by_category,
+)
+from .export_assets import default_export_name, export_by_type
+from .maker import (
+    decode_text_asset_raw,
+    export_mod_pack,
+    find_anim_preview_texture,
+    is_readable_text_asset,
+    list_text_assets,
+    read_text_asset,
+    replace_bundle_animation_raw,
+    replace_bundle_text,
+    replace_bundle_texture,
+)
+from .manager import ModAnalysis, ModManager
+
+__all__ = [
+    "AA_SUBPATH",
+    "aa_dir_for_exe",
+    "build_asset_index",
+    "build_texture_index",
+    "extract_texture_png",
+    "load_asset_index",
+    "load_texture_index",
+    "read_bundle_textures",
+    "ADVANCED_IDS",
+    "ASSET_TYPES",
+    "all_categories",
+    "categorize",
+    "category_desc",
+    "category_label",
+    "count_by_category",
+    "describe_selection",
+    "filter_by_category",
+    "default_export_name",
+    "decode_text_asset_raw",
+    "export_by_type",
+    "export_mod_pack",
+    "find_anim_preview_texture",
+    "is_readable_text_asset",
+    "list_text_assets",
+    "read_text_asset",
+    "replace_bundle_animation_raw",
+    "replace_bundle_text",
+    "replace_bundle_texture",
+    "ModAnalysis",
+    "ModManager",
+]

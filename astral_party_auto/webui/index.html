@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>吉星派对 Mod 助手</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="app" class="app-shell is-loading">
+    <aside class="sidebar" aria-label="主导航">
+      <div class="brand">
+        <img class="brand-logo" src="app_icon.png" alt="">
+        <div class="brand-copy">
+          <strong>吉星派对</strong>
+          <span>Mod 助手 · HTML UI</span>
+        </div>
+      </div>
+
+      <nav class="nav-list">
+        <button class="nav-button is-active" data-page="dashboard"><span class="nav-icon">⌂</span><span>仪表盘</span></button>
+        <button class="nav-button" data-page="manage"><span class="nav-icon">◇</span><span>Mod 管理</span></button>
+        <button class="nav-button" data-page="browse"><span class="nav-icon">⌕</span><span>浏览资源</span></button>
+        <button class="nav-button" data-page="studio"><span class="nav-icon">✦</span><span>制作替换</span></button>
+        <button class="nav-button" data-page="pack"><span class="nav-icon">▣</span><span>我的作品集</span><em id="nav-pack-count"></em></button>
+        <button class="nav-button" data-page="logs"><span class="nav-icon">≡</span><span>运行日志</span></button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <button id="sidebar-launch" class="button primary wide">启动游戏</button>
+        <button id="sidebar-restore" class="button danger wide">一键全还原</button>
+        <span>安装前自动备份，可随时还原</span>
+      </div>
+    </aside>
+
+    <section class="workspace">
+      <header class="topbar">
+        <button id="mobile-nav-toggle" class="icon-button" aria-label="展开导航">☰</button>
+        <h1 id="page-title">仪表盘</h1>
+        <div id="header-status" class="status-pill"><i></i><span>正在连接后端…</span></div>
+      </header>
+
+      <main id="main-content" class="main-content">
+        <section id="page-dashboard" class="page is-active">
+          <div class="stat-grid">
+            <article class="stat-card"><span><i class="dot green"></i>游戏检测</span><strong id="stat-game">检测中…</strong></article>
+            <article class="stat-card"><span><i class="dot gold"></i>资源包</span><strong id="stat-bundles">—</strong></article>
+            <article class="stat-card"><span><i class="dot pink"></i>已装 Mod</span><strong id="stat-installed">0</strong></article>
+            <article class="stat-card"><span><i class="dot green"></i>已备份原文件</span><strong id="stat-backups">0</strong></article>
+          </div>
+
+          <article class="card">
+            <h2>快速开始</h2>
+            <p>装 Mod 会自动备份原文件；不满意随时一键还原，不怕改坏。</p>
+            <div class="action-row">
+              <button class="button primary" data-action="launch-game">启动游戏</button>
+              <button class="button purple" data-page-link="manage">去装 Mod</button>
+              <button class="button ghost" data-page-link="browse">浏览资源</button>
+              <button class="button ghost" data-page-link="pack">我的作品集</button>
+              <button class="button ghost" data-action="refresh-detection">刷新检测</button>
+              <button class="button ghost" data-action="open-assets">打开资源目录</button>
+            </div>
+            <small id="game-path">自动检测游戏路径中…</small>
+          </article>
+
+          <article class="card guide-card">
+            <h2>怎么用</h2>
+            <ul>
+              <li>浏览资源：选择贴图、文本、3D 模型或动画。</li>
+              <li>贴图、文本和动画可替换；3D 模型仅导出。</li>
+              <li>替换内容先加入作品集，再导出 ZIP 或直接安装。</li>
+              <li>全程只处理本地资源包，不注入进程。</li>
+            </ul>
+          </article>
+        </section>
+
+        <section id="page-manage" class="page">
+          <article class="card">
+            <div class="section-heading"><div><h2>安装 Mod</h2><p>支持文件夹、ZIP 和 RAR；分析后才会启用安装按钮。</p></div></div>
+            <div class="action-row">
+              <button id="choose-mod-folder" class="button ghost">选择 Mod 文件夹</button>
+              <button id="choose-mod-archive" class="button ghost">选择压缩包</button>
+              <button id="install-mod" class="button primary" disabled>确认安装</button>
+            </div>
+            <div id="mod-analysis" class="notice">还没有选择 Mod。</div>
+          </article>
+
+          <article class="card">
+            <div class="section-heading"><div><h2>已装 Mod</h2><p>可以预览、禁用、启用或卸载。</p></div><span id="installed-count" class="count-badge">0 个</span></div>
+            <div id="installed-list" class="stack-list"></div>
+            <div id="installed-preview" class="inline-preview is-hidden">
+              <div><strong id="installed-preview-title"></strong><span id="installed-preview-meta"></span></div>
+              <img id="installed-preview-image" alt="Mod 预览">
+            </div>
+          </article>
+        </section>
+
+        <section id="page-browse" class="page browse-page">
+          <div class="browse-layout">
+            <aside class="panel category-panel">
+              <label for="asset-type">资源类型</label>
+              <select id="asset-type"></select>
+              <p id="asset-type-hint"></p>
+              <div id="category-list" class="category-list"></div>
+            </aside>
+
+            <section class="panel resource-panel">
+              <div class="search-row">
+                <input id="resource-search" type="search" placeholder="搜索资源名 / 包名…">
+                <button id="resource-search-button" class="button ghost compact">搜索</button>
+                <button id="build-index" class="button purple compact">刷新索引</button>
+              </div>
+              <div class="list-meta"><span id="resource-status">请选择分类</span><span id="resource-page-label"></span></div>
+              <div id="resource-list" class="resource-list"></div>
+              <div class="pager">
+                <button id="resource-prev" class="button ghost compact">上一页</button>
+                <button id="resource-next" class="button ghost compact">下一页</button>
+              </div>
+            </section>
+
+            <aside class="panel preview-panel">
+              <div><span class="eyebrow">预览</span><h2 id="preview-title">还没选资源</h2><p id="preview-description">点中间列表的一项</p></div>
+              <div id="preview-media" class="preview-media"><span>等待选择</span></div>
+              <div class="preview-actions">
+                <button id="go-studio" class="button primary wide" disabled>去制作替换</button>
+                <div class="action-row two-up">
+                  <button id="export-primary" class="button ghost" disabled>导出</button>
+                  <button id="export-secondary" class="button ghost" disabled>副格式</button>
+                </div>
+              </div>
+            </aside>
+          </div>
+        </section>
+
+        <section id="page-studio" class="page">
+          <div id="studio-empty" class="empty-state"><strong>还没选资源</strong><span>先到“浏览资源”选择一项。</span><button class="button ghost" data-page-link="browse">去浏览资源</button></div>
+          <div id="studio-content" class="is-hidden">
+            <article class="selection-banner"><span class="eyebrow">当前资源</span><h2 id="studio-title"></h2><p id="studio-description"></p></article>
+            <div id="studio-image-mode" class="compare-grid">
+              <article class="card preview-card"><h3>游戏原内容</h3><div id="studio-original" class="preview-media tall"></div></article>
+              <article class="card preview-card"><h3>你的替换文件</h3><div id="studio-replacement" class="preview-media tall"><span>点击下方按钮选择文件</span></div></article>
+            </div>
+            <article id="studio-text-mode" class="card is-hidden"><h3>编辑文本</h3><textarea id="studio-text"></textarea></article>
+            <div class="action-row studio-actions">
+              <button class="button ghost" data-page-link="browse">← 回浏览</button>
+              <button id="choose-replacement" class="button ghost">选择替换文件</button>
+              <button id="commit-replacement" class="button primary">确认替换并加入作品集</button>
+              <button class="button purple" data-page-link="pack">打开作品集 →</button>
+            </div>
+          </div>
+        </section>
+
+        <section id="page-pack" class="page">
+          <article class="card pack-header">
+            <div><h2>我的作品集 <span id="draft-count">0 项</span></h2><p>点选一项预览；可以导出 ZIP 或安装到游戏。</p></div>
+            <label>套装名<input id="draft-name" maxlength="60"></label>
+          </article>
+          <div class="pack-layout">
+            <section class="panel"><div id="draft-list" class="draft-list"></div></section>
+            <section class="panel draft-detail">
+              <h2 id="draft-detail-title">尚未选择</h2>
+              <div class="compare-grid compact-grid">
+                <div><h3>游戏原图</h3><div id="draft-original" class="preview-media tall"></div></div>
+                <div><h3>替换后</h3><div id="draft-modified" class="preview-media tall"></div></div>
+              </div>
+              <div class="action-row">
+                <button id="draft-replace" class="button primary" disabled>换图…</button>
+                <button id="draft-remove" class="button danger" disabled>移除这项</button>
+              </div>
+              <div class="action-row">
+                <button id="draft-export" class="button primary">导出 ZIP 分享</button>
+                <button id="draft-install" class="button purple">安装到游戏</button>
+                <button id="draft-open-dir" class="button ghost">打开导出目录</button>
+                <button id="draft-clear" class="button ghost">清空全部</button>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <section id="page-logs" class="page">
+          <article class="card log-card">
+            <div class="section-heading"><div><h2>运行日志</h2><p>资源扫描、替换和安装记录都会显示在这里。</p></div><button id="clear-logs" class="button ghost compact">清空日志</button></div>
+            <pre id="log-output"></pre>
+          </article>
+        </section>
+      </main>
+    </section>
+  </div>
+
+  <div id="loading-overlay" class="loading-overlay"><div class="spinner"></div><span>正在连接本地后端…</span></div>
+  <div id="busy-overlay" class="busy-overlay is-hidden"><div class="spinner"></div><span id="busy-text">处理中…</span></div>
+  <div id="toast-region" class="toast-region" aria-live="polite"></div>
+  <script src="app.js" defer></script>
+</body>
+</html>

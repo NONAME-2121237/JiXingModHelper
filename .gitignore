@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+.eggs/
+*.egg
+
+# Build / package output (upload source only; put exe in GitHub Releases)
+build/
+dist/
+*.manifest
+*.spec.bak
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Runtime data (generated when app runs — do not commit)
+modkit_data/**
+!modkit_data/.gitkeep
+made_mods/**
+!made_mods/.gitkeep
+*.bundle
+*.animbin
+
+# Local shortcuts / temp
+*.lnk
+_fix_shortcut.*
+*.log
+*.tmp
+
+# Secrets / personal
+.env
+*.local
+
+# PyInstaller leftovers
+*.spec.bak
+.dist\
+

@@ -1,0 +1,862 @@
+/* 吉星派对 Mod 助手 — HTML 前端，通过 pywebview.api 调 Python 后端 */
+(() => {
+  "use strict";
+
+  const PAGE_SIZE = 25;
+  const PAGE_TITLES = {
+    dashboard: "仪表盘",
+    manage: "Mod 管理",
+    browse: "浏览资源",
+    studio: "制作替换",
+    pack: "我的作品集",
+    logs: "运行日志",
+  };
+  const TYPE_HINTS = {
+    texture: "图片资源。走路/攻击一帧帧图在细分类「角色动作帧」。",
+    text: "可读配置/文案。FairyGUI 二进制已过滤。",
+    mesh: "3D 三角面模型，只导出不替换。",
+    anim: "Unity 动画片段。预览为同包第一帧/图集，可换图或 .animbin。",
+  };
+
+  const state = {
+    page: "dashboard",
+    dashboard: null,
+    installed: [],
+    draft: { name: "我的Mod套装", items: [] },
+    assetTypes: [],
+    assetType: "texture",
+    categories: [],
+    categoryId: "hand_card",
+    resources: [],
+    resourcePage: 0,
+    query: "",
+    selection: null,
+    draftIndex: -1,
+    pendingMod: null,
+    replacement: null,
+    busy: false,
+  };
+
+  const $ = (sel, root = document) => root.querySelector(sel);
+  const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+
+  function toast(message, isError = false) {
+    const region = $("#toast-region");
+    if (!region || !message) return;
+    const el = document.createElement("div");
+    el.className = "toast" + (isError ? " is-error" : "");
+    el.textContent = message;
+    region.appendChild(el);
+    setTimeout(() => el.remove(), 4200);
+  }
+
+  function setBusy(on, text = "处理中…") {
+    state.busy = !!on;
+    const overlay = $("#busy-overlay");
+    if (!overlay) return;
+    overlay.classList.toggle("is-hidden", !on);
+    const label = $("#busy-text");
+    if (label) label.textContent = text;
+  }
+
+  function setHeaderStatus(text, isError = false) {
+    const pill = $("#header-status");
+    if (!pill) return;
+    pill.classList.toggle("is-error", !!isError);
+    const span = pill.querySelector("span");
+    if (span) span.textContent = text;
+  }
+
+  async function api(name, ...args) {
+    if (!window.pywebview || !window.pywebview.api || !window.pywebview.api[name]) {
+      throw new Error("后端未就绪（pywebview.api 不可用）");
+    }
+    const result = await window.pywebview.api[name](...args);
+    if (result && typeof result === "object" && "ok" in result) {
+      if (!result.ok) throw new Error(result.error || "操作失败");
+      return result.data;
+    }
+    return result;
+  }
+
+  async function call(name, options = {}, ...args) {
+    const { busy = false, busyText = "处理中…", quiet = false } = options;
+    if (busy) setBusy(true, busyText);
+    try {
+      return await api(name, ...args);
+    } catch (err) {
+      if (!quiet) toast(err.message || String(err), true);
+      throw err;
+    } finally {
+      if (busy) setBusy(false);
+    }
+  }
+
+  function showPage(page) {
+    if (!PAGE_TITLES[page]) return;
+    state.page = page;
+    $$(".page").forEach((el) => el.classList.toggle("is-active", el.id === `page-${page}`));
+    $$(".nav-button").forEach((btn) =>
+      btn.classList.toggle("is-active", btn.dataset.page === page)
+    );
+    const title = $("#page-title");
+    if (title) title.textContent = PAGE_TITLES[page];
+    document.body.classList.remove("nav-open");
+    if (page === "browse") refreshBrowse();
+    if (page === "studio") refreshStudio();
+    if (page === "pack") refreshPack();
+    if (page === "manage") renderInstalled();
+    if (page === "logs") refreshLogs();
+    if (page === "dashboard") renderDashboard();
+  }
+
+  function renderDashboard() {
+    const d = state.dashboard || {};
+    const game = $("#stat-game");
+    const bundles = $("#stat-bundles");
+    const installed = $("#stat-installed");
+    const backups = $("#stat-backups");
+    const path = $("#game-path");
+    if (game) game.textContent = d.has_game ? d.game_name || "已找到" : "未检测到";
+    if (bundles) {
+      const tex = d.texture_bundle_count != null ? d.texture_bundle_count : "—";
+      bundles.textContent = d.bundle_count != null ? `${d.bundle_count}（含贴图 ${tex}）` : "—";
+    }
+    if (installed) installed.textContent = String(d.installed_count ?? 0);
+    if (backups) backups.textContent = String(d.backup_count ?? 0);
+    if (path) {
+      path.textContent = d.has_game
+        ? `自动找到的游戏：${d.game_exe || ""}`
+        : "未找到游戏，请确认 Steam 已安装吉星派对。";
+    }
+    setHeaderStatus(d.has_game ? "游戏已连接" : "未检测到游戏", !d.has_game);
+  }
+
+  function renderInstalled() {
+    const list = $("#installed-list");
+    const badge = $("#installed-count");
+    if (badge) badge.textContent = `${state.installed.length} 个`;
+    if (!list) return;
+    list.innerHTML = "";
+    if (!state.installed.length) {
+      list.innerHTML = `<div class="notice">还没有安装任何 Mod。</div>`;
+      return;
+    }
+    state.installed.forEach((mod) => {
+      const row = document.createElement("div");
+      row.className = "list-row";
+      const disabled = !!mod.disabled;
+      const fileCount = mod.files_count ?? (Array.isArray(mod.files) ? mod.files.length : mod.count ?? "");
+      row.innerHTML = `
+        <div class="list-row-main">
+          <strong>${escapeHtml(mod.name || "")}</strong>
+          <span>${disabled ? "已禁用" : "已启用"} · ${escapeHtml(String(fileCount))} 个包</span>
+        </div>
+        <div class="list-row-actions"></div>
+      `;
+      const actions = row.querySelector(".list-row-actions");
+      const mk = (label, cls, fn) => {
+        const b = document.createElement("button");
+        b.className = `button ${cls} compact`;
+        b.textContent = label;
+        b.addEventListener("click", fn);
+        actions.appendChild(b);
+      };
+      mk("预览", "ghost", () => previewInstalled(mod.name));
+      if (disabled) mk("启用", "primary", () => changeMod("enable", mod.name));
+      else mk("禁用", "purple", () => changeMod("disable", mod.name));
+      mk("卸载", "ghost", () => changeMod("uninstall", mod.name));
+      list.appendChild(row);
+    });
+  }
+
+  async function previewInstalled(name) {
+    try {
+      const data = await call("preview_installed_mod", { busy: true, busyText: "加载预览…" }, name);
+      const box = $("#installed-preview");
+      box.classList.remove("is-hidden");
+      $("#installed-preview-title").textContent = name;
+      $("#installed-preview-meta").textContent = `${data.texture || ""} ${data.size || ""}`.trim();
+      const img = $("#installed-preview-image");
+      if (data.preview_data) {
+        img.src = data.preview_data;
+        img.classList.remove("is-hidden");
+      } else {
+        img.removeAttribute("src");
+      }
+    } catch (_) {}
+  }
+
+  async function changeMod(action, name) {
+    const labels = { enable: "启用", disable: "禁用", uninstall: "卸载" };
+    if (action === "uninstall" && !confirm(`确定卸载「${name}」并还原对应资源？`)) return;
+    try {
+      const data = await call("change_mod", { busy: true, busyText: `${labels[action] || "处理"}中…` }, action, name);
+      state.installed = data.installed || [];
+      state.dashboard = data.dashboard || state.dashboard;
+      renderInstalled();
+      renderDashboard();
+      toast(`已${labels[action] || "处理"}：${name}`);
+    } catch (_) {}
+  }
+
+  function fillAssetTypes() {
+    const select = $("#asset-type");
+    if (!select) return;
+    select.innerHTML = "";
+    (state.assetTypes.length ? state.assetTypes : [
+      { id: "texture", label: "贴图" },
+      { id: "text", label: "文本" },
+      { id: "mesh", label: "3D模型" },
+      { id: "anim", label: "动画" },
+    ]).forEach((t) => {
+      const opt = document.createElement("option");
+      opt.value = t.id;
+      opt.textContent = t.label;
+      select.appendChild(opt);
+    });
+    select.value = state.assetType;
+    const hint = $("#asset-type-hint");
+    if (hint) hint.textContent = TYPE_HINTS[state.assetType] || "";
+  }
+
+  async function refreshBrowse() {
+    fillAssetTypes();
+    try {
+      const cats = await call("get_categories", { quiet: true }, state.assetType);
+      state.categories = cats || [];
+      if (!state.categories.some((c) => c.id === state.categoryId)) {
+        state.categoryId = state.categories[0]?.id || "all";
+      }
+      renderCategories();
+      await loadResources();
+    } catch (err) {
+      $("#resource-status").textContent = err.message || "加载失败";
+    }
+  }
+
+  function renderCategories() {
+    const host = $("#category-list");
+    if (!host) return;
+    host.innerHTML = "";
+    if (!state.categories.length) {
+      host.innerHTML = `<div class="notice">无分类（可先刷新索引）</div>`;
+      return;
+    }
+    state.categories.forEach((cat) => {
+      if (state.assetType === "texture" && cat.count === 0 && !["all", "hand_card"].includes(cat.id)) return;
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "category-button" + (cat.id === state.categoryId ? " is-active" : "");
+      btn.innerHTML = `<span>${escapeHtml(cat.label)}</span><small>${cat.count} ${state.assetType === "texture" ? "张" : "条"}</small>`;
+      btn.addEventListener("click", () => {
+        state.categoryId = cat.id;
+        state.resourcePage = 0;
+        renderCategories();
+        loadResources();
+      });
+      host.appendChild(btn);
+    });
+  }
+
+  async function loadResources() {
+    $("#resource-status").textContent = "加载中…";
+    try {
+      const rows = await call(
+        "browse_assets",
+        { quiet: true },
+        state.assetType,
+        state.categoryId,
+        state.query || ""
+      );
+      state.resources = rows || [];
+      state.resourcePage = 0;
+      renderResources();
+    } catch (err) {
+      state.resources = [];
+      renderResources();
+      $("#resource-status").textContent = err.message || "加载失败";
+    }
+  }
+
+  function renderResources() {
+    const list = $("#resource-list");
+    const status = $("#resource-status");
+    const pageLabel = $("#resource-page-label");
+    if (!list) return;
+    list.innerHTML = "";
+    const total = state.resources.length;
+    const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+    state.resourcePage = Math.min(state.resourcePage, pages - 1);
+    const start = state.resourcePage * PAGE_SIZE;
+    const chunk = state.resources.slice(start, start + PAGE_SIZE);
+    if (status) status.textContent = total ? `已加载 ${total} 条（同名已合并）` : "没有匹配";
+    if (pageLabel) pageLabel.textContent = total ? `第 ${state.resourcePage + 1}/${pages} 页` : "";
+    if (!chunk.length) {
+      list.innerHTML = `<div class="notice">没有匹配的资源。</div>`;
+      return;
+    }
+    const selKey = state.selection ? `${state.selection.bundle}::${state.selection.name}` : "";
+    chunk.forEach((row) => {
+      const key = `${row.bundle}::${row.name}`;
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "resource-item" + (key === selKey ? " is-active" : "");
+      const label = row.duplicates > 1 ? `${row.name}  ×${row.duplicates}包` : row.name;
+      item.innerHTML = `<span>${escapeHtml(label)}</span>`;
+      item.addEventListener("click", () => selectResource(row.bundle, row.name));
+      list.appendChild(item);
+    });
+  }
+
+  async function selectResource(bundle, name) {
+    try {
+      const sel = await call("select_asset", { busy: true, busyText: "加载预览…" }, state.assetType, bundle, name);
+      state.selection = sel;
+      renderPreview();
+      renderResources();
+      updateExportButtons();
+    } catch (_) {}
+  }
+
+  function renderPreview() {
+    const sel = state.selection;
+    const title = $("#preview-title");
+    const desc = $("#preview-description");
+    const media = $("#preview-media");
+    const go = $("#go-studio");
+    if (!sel) {
+      if (title) title.textContent = "还没选资源";
+      if (desc) desc.textContent = "点中间列表的一项";
+      if (media) media.innerHTML = "<span>等待选择</span>";
+      if (go) go.disabled = true;
+      return;
+    }
+    if (title) title.textContent = sel.caption || sel.name || "资源";
+    if (desc) desc.textContent = sel.category_desc || "";
+    if (media) {
+      if (sel.preview_data) {
+        media.innerHTML = `<img src="${sel.preview_data}" alt="preview">`;
+      } else if (sel.text_preview) {
+        media.innerHTML = `<pre>${escapeHtml(sel.text_preview)}</pre>`;
+      } else {
+        media.innerHTML = "<span>无可视预览</span>";
+      }
+    }
+    if (go) go.disabled = (sel.asset_type || sel.kind) === "mesh";
+    updateExportButtons();
+  }
+
+  function updateExportButtons() {
+    const sel = state.selection;
+    const a = $("#export-primary");
+    const b = $("#export-secondary");
+    if (!a || !b) return;
+    if (!sel) {
+      a.disabled = b.disabled = true;
+      a.textContent = "导出";
+      b.textContent = "副格式";
+      return;
+    }
+    a.disabled = false;
+    b.disabled = false;
+    const kind = sel.asset_type || sel.kind;
+    if (kind === "texture") {
+      a.textContent = "导出 PNG";
+      b.textContent = "导出 JPG";
+    } else if (kind === "text") {
+      a.textContent = "导出文本";
+      b.textContent = "导出";
+    } else if (kind === "mesh") {
+      a.textContent = "导出 OBJ";
+      b.textContent = "导出";
+    } else if (kind === "anim") {
+      a.textContent = "导出 JSON";
+      b.textContent = "导出二进制";
+    } else {
+      a.textContent = "导出";
+      b.textContent = "导出";
+    }
+  }
+
+  async function refreshStudio() {
+    const empty = $("#studio-empty");
+    const content = $("#studio-content");
+    try {
+      const sel = await call("get_studio_state", { quiet: true });
+      state.selection = sel;
+    } catch (_) {
+      state.selection = null;
+    }
+    if (!state.selection) {
+      empty.classList.remove("is-hidden");
+      content.classList.add("is-hidden");
+      return;
+    }
+    empty.classList.add("is-hidden");
+    content.classList.remove("is-hidden");
+    const sel = state.selection;
+    $("#studio-title").textContent = sel.caption || sel.name || "";
+    $("#studio-description").textContent = sel.category_desc || sel.text_preview || "";
+    const kind = sel.asset_type || sel.kind || "texture";
+    const imageMode = $("#studio-image-mode");
+    const textMode = $("#studio-text-mode");
+    const chooseBtn = $("#choose-replacement");
+    if (kind === "text") {
+      imageMode.classList.add("is-hidden");
+      textMode.classList.remove("is-hidden");
+      chooseBtn.classList.add("is-hidden");
+      $("#studio-text").value = sel.full_text || sel.text_preview || "";
+    } else if (kind === "mesh") {
+      imageMode.classList.remove("is-hidden");
+      textMode.classList.add("is-hidden");
+      chooseBtn.classList.add("is-hidden");
+      setMedia($("#studio-original"), null, "3D 模型仅导出");
+      setMedia($("#studio-replacement"), null, "不支持替换");
+    } else {
+      imageMode.classList.remove("is-hidden");
+      textMode.classList.add("is-hidden");
+      chooseBtn.classList.remove("is-hidden");
+      setMedia($("#studio-original"), sel.preview_data, "无预览图");
+      if (state.replacement?.preview_data) {
+        setMedia($("#studio-replacement"), state.replacement.preview_data, state.replacement.name);
+      } else if (state.replacement) {
+        setMedia($("#studio-replacement"), null, state.replacement.name || "已选文件");
+      } else {
+        setMedia($("#studio-replacement"), null, "点击下方按钮选择文件");
+      }
+    }
+  }
+
+  function setMedia(el, dataUrl, fallback) {
+    if (!el) return;
+    if (dataUrl) el.innerHTML = `<img src="${dataUrl}" alt="">`;
+    else el.innerHTML = `<span>${escapeHtml(fallback || "—")}</span>`;
+  }
+
+  function renderDraftList() {
+    const list = $("#draft-list");
+    const count = $("#draft-count");
+    const navCount = $("#nav-pack-count");
+    const items = state.draft?.items || [];
+    if (count) count.textContent = `${items.length} 项`;
+    if (navCount) navCount.textContent = items.length ? String(items.length) : "";
+    const nameInput = $("#draft-name");
+    if (nameInput && document.activeElement !== nameInput) nameInput.value = state.draft?.name || "";
+    if (!list) return;
+    list.innerHTML = "";
+    if (!items.length) {
+      list.innerHTML = `<div class="notice">作品集是空的。去浏览资源替换后加入。</div>`;
+      return;
+    }
+    items.forEach((item, index) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "draft-item" + (index === state.draftIndex ? " is-active" : "");
+      const kind = item.kind === "texture" ? "图" : item.kind === "text" ? "文" : item.kind === "anim" ? "动" : item.kind || "?";
+      btn.innerHTML = `<span>[${kind}] ${escapeHtml(item.name || "")}</span><small>${escapeHtml(item.note || "")}</small>`;
+      btn.addEventListener("click", () => showDraftDetail(index));
+      list.appendChild(btn);
+    });
+  }
+
+  async function refreshPack() {
+    try {
+      state.draft = (await call("get_draft", { quiet: true })) || state.draft;
+    } catch (_) {}
+    renderDraftList();
+    if (state.draftIndex >= 0 && state.draftIndex < (state.draft.items || []).length) {
+      await showDraftDetail(state.draftIndex);
+    } else {
+      state.draftIndex = -1;
+      $("#draft-detail-title").textContent = "尚未选择";
+      setMedia($("#draft-original"), null, "—");
+      setMedia($("#draft-modified"), null, "—");
+      $("#draft-replace").disabled = true;
+      $("#draft-remove").disabled = true;
+    }
+  }
+
+  async function showDraftDetail(index) {
+    state.draftIndex = index;
+    renderDraftList();
+    try {
+      const data = await call("get_draft_detail", { quiet: true }, index);
+      const item = data.item || {};
+      $("#draft-detail-title").textContent = `${item.kind || ""} · ${item.name || ""}`;
+      setMedia($("#draft-original"), data.original_data, "无预览");
+      setMedia($("#draft-modified"), data.modified_data, "无预览");
+      $("#draft-replace").disabled = item.kind !== "texture";
+      $("#draft-remove").disabled = false;
+    } catch (err) {
+      toast(err.message, true);
+    }
+  }
+
+  async function refreshLogs() {
+    try {
+      const lines = await call("get_logs", { quiet: true });
+      const out = $("#log-output");
+      if (out) out.textContent = (lines || []).join("\n") || "（暂无日志）";
+    } catch (_) {}
+  }
+
+  function appendLogLine(line) {
+    const out = $("#log-output");
+    if (!out) return;
+    if (!out.textContent || out.textContent === "（暂无日志）") out.textContent = line;
+    else out.textContent += "\n" + line;
+    out.scrollTop = out.scrollHeight;
+  }
+
+  function escapeHtml(s) {
+    return String(s ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function bindEvents() {
+    $$(".nav-button").forEach((btn) => btn.addEventListener("click", () => showPage(btn.dataset.page)));
+    $$("[data-page-link]").forEach((btn) =>
+      btn.addEventListener("click", () => showPage(btn.dataset.pageLink))
+    );
+
+    $("#mobile-nav-toggle")?.addEventListener("click", () => {
+      document.body.classList.toggle("nav-open");
+    });
+
+    $("#sidebar-launch")?.addEventListener("click", () => doAction("launch-game"));
+    $("#sidebar-restore")?.addEventListener("click", () => doAction("restore-all"));
+
+    $$("[data-action]").forEach((btn) =>
+      btn.addEventListener("click", () => doAction(btn.dataset.action))
+    );
+
+    $("#choose-mod-folder")?.addEventListener("click", () => chooseMod("folder"));
+    $("#choose-mod-archive")?.addEventListener("click", () => chooseMod("archive"));
+    $("#install-mod")?.addEventListener("click", installMod);
+
+    $("#asset-type")?.addEventListener("change", (e) => {
+      state.assetType = e.target.value;
+      state.categoryId = state.assetType === "texture" ? "hand_card" : "all";
+      state.selection = null;
+      renderPreview();
+      const hint = $("#asset-type-hint");
+      if (hint) hint.textContent = TYPE_HINTS[state.assetType] || "";
+      refreshBrowse();
+    });
+    $("#resource-search-button")?.addEventListener("click", () => {
+      state.query = $("#resource-search").value.trim();
+      state.resourcePage = 0;
+      loadResources();
+    });
+    $("#resource-search")?.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        state.query = e.target.value.trim();
+        state.resourcePage = 0;
+        loadResources();
+      }
+    });
+    $("#build-index")?.addEventListener("click", buildIndex);
+    $("#resource-prev")?.addEventListener("click", () => {
+      if (state.resourcePage > 0) {
+        state.resourcePage -= 1;
+        renderResources();
+      }
+    });
+    $("#resource-next")?.addEventListener("click", () => {
+      const pages = Math.max(1, Math.ceil(state.resources.length / PAGE_SIZE));
+      if (state.resourcePage < pages - 1) {
+        state.resourcePage += 1;
+        renderResources();
+      }
+    });
+    $("#go-studio")?.addEventListener("click", () => {
+      if ((state.selection?.asset_type || state.selection?.kind) === "mesh") {
+        toast("3D 模型只支持导出，不替换", true);
+        return;
+      }
+      state.replacement = null;
+      showPage("studio");
+    });
+    $("#export-primary")?.addEventListener("click", () => exportSelection("primary"));
+    $("#export-secondary")?.addEventListener("click", () => exportSelection("secondary"));
+
+    $("#choose-replacement")?.addEventListener("click", chooseReplacement);
+    $("#commit-replacement")?.addEventListener("click", commitReplacement);
+
+    $("#draft-name")?.addEventListener("change", async (e) => {
+      try {
+        state.draft = await call("set_draft_name", { quiet: true }, e.target.value);
+        renderDraftList();
+      } catch (_) {}
+    });
+    $("#draft-replace")?.addEventListener("click", async () => {
+      if (state.draftIndex < 0) return;
+      try {
+        const data = await call("replace_draft_image", { busy: true, busyText: "换图中…" }, state.draftIndex);
+        if (!data) return;
+        state.draft = data.draft;
+        toast("已更新作品集项");
+        await showDraftDetail(state.draftIndex);
+      } catch (_) {}
+    });
+    $("#draft-remove")?.addEventListener("click", async () => {
+      if (state.draftIndex < 0) return;
+      try {
+        state.draft = await call("remove_draft_item", { busy: true }, state.draftIndex);
+        state.draftIndex = -1;
+        await refreshPack();
+        toast("已移除");
+      } catch (_) {}
+    });
+    $("#draft-export")?.addEventListener("click", async () => {
+      try {
+        const data = await call("export_draft", { busy: true, busyText: "导出 ZIP…" });
+        toast(`已导出：${data.path}`);
+      } catch (_) {}
+    });
+    $("#draft-install")?.addEventListener("click", async () => {
+      try {
+        const data = await call("install_draft", { busy: true, busyText: "安装作品集…" });
+        state.installed = data.installed || state.installed;
+        state.dashboard = data.dashboard || state.dashboard;
+        renderDashboard();
+        toast("作品集已安装到游戏");
+      } catch (_) {}
+    });
+    $("#draft-open-dir")?.addEventListener("click", () => call("open_made_dir", { quiet: false }));
+    $("#draft-clear")?.addEventListener("click", async () => {
+      if (!confirm("清空整个作品集？")) return;
+      try {
+        state.draft = await call("clear_draft", { busy: true });
+        state.draftIndex = -1;
+        await refreshPack();
+        toast("作品集已清空");
+      } catch (_) {}
+    });
+
+    $("#clear-logs")?.addEventListener("click", async () => {
+      await call("clear_logs", { quiet: true });
+      $("#log-output").textContent = "（暂无日志）";
+    });
+  }
+
+  async function doAction(action) {
+    try {
+      if (action === "launch-game") {
+        await call("launch_game", { busy: true, busyText: "启动游戏…" });
+        toast("已尝试启动游戏");
+      } else if (action === "restore-all") {
+        if (!confirm("一键全还原：恢复所有备份的原始资源包？")) return;
+        const data = await call("restore_all", { busy: true, busyText: "还原中…" });
+        state.dashboard = data.dashboard || state.dashboard;
+        state.installed = data.installed || [];
+        renderDashboard();
+        renderInstalled();
+        toast(`已还原 ${data.restored || 0} 个资源包`);
+      } else if (action === "refresh-detection") {
+        state.dashboard = await call("refresh_detection", { busy: true, busyText: "检测中…" });
+        renderDashboard();
+        toast("已刷新检测");
+      } else if (action === "open-assets") {
+        await call("open_asset_dir");
+      }
+    } catch (_) {}
+  }
+
+  async function chooseMod(mode) {
+    try {
+      const data = await call("choose_mod", { busy: true, busyText: "分析 Mod…" }, mode);
+      if (!data) return;
+      state.pendingMod = data;
+      const box = $("#mod-analysis");
+      box.textContent = `已选：${data.name}\n路径：${data.path}\n可装 ${data.matched} / 共 ${data.total}（跳过 ${data.unmatched}）`;
+      $("#install-mod").disabled = !(data.matched > 0);
+      toast(`分析完成：可装 ${data.matched} 个包`);
+    } catch (_) {}
+  }
+
+  async function installMod() {
+    try {
+      const data = await call("install_pending_mod", { busy: true, busyText: "安装中…" });
+      state.installed = data.installed || [];
+      state.dashboard = data.dashboard || state.dashboard;
+      state.pendingMod = null;
+      $("#install-mod").disabled = true;
+      $("#mod-analysis").textContent = `已安装「${data.name}」：替换 ${data.matched} 个包。`;
+      renderInstalled();
+      renderDashboard();
+      toast(`安装完成：${data.name}`);
+    } catch (_) {}
+  }
+
+  async function buildIndex() {
+    try {
+      await call("build_index", { busy: false });
+      setBusy(true, "建索引…");
+      toast("开始扫描资源包…");
+    } catch (_) {
+      setBusy(false);
+    }
+  }
+
+  async function exportSelection(variant) {
+    if (!state.selection) return;
+    try {
+      const data = await call("export_selection", { busy: true, busyText: "导出中…" }, variant);
+      if (!data) return;
+      toast(`已导出：${data.path}`);
+    } catch (_) {}
+  }
+
+  async function chooseReplacement() {
+    try {
+      const data = await call("choose_replacement", { busy: false });
+      if (!data) return;
+      state.replacement = data;
+      setMedia($("#studio-replacement"), data.preview_data, data.name);
+      toast(`已选择：${data.name}`);
+    } catch (_) {}
+  }
+
+  async function commitReplacement() {
+    const kind = state.selection?.asset_type || state.selection?.kind;
+    if (kind === "mesh") {
+      toast("3D 模型不支持替换", true);
+      return;
+    }
+    const text = kind === "text" ? $("#studio-text").value : "";
+    try {
+      const data = await call("commit_replacement", { busy: true, busyText: "写入作品集…" }, text);
+      state.draft = data.draft;
+      state.replacement = null;
+      toast("已加入作品集");
+      renderDraftList();
+    } catch (_) {}
+  }
+
+  // 后端推送事件
+  window.handleBackendEvent = function handleBackendEvent(packet) {
+    const event = packet?.event;
+    const payload = packet?.payload || {};
+    if (event === "log" && payload.line) {
+      appendLogLine(payload.line);
+    } else if (event === "index_progress") {
+      setBusy(true, `建索引… ${payload.done || 0}/${payload.total || "?"}`);
+    } else if (event === "index_done") {
+      setBusy(false);
+      const c = payload.counts || {};
+      toast(
+        `索引完成：${payload.bundles || 0} 包 · 贴图${c.texture || 0}/文本${c.text || 0}/模型${c.mesh || 0}/动画${c.anim || 0}`
+      );
+      if (state.page === "browse") refreshBrowse();
+      call("bootstrap", { quiet: true })
+        .then((boot) => {
+          if (boot?.dashboard) {
+            state.dashboard = boot.dashboard;
+            renderDashboard();
+          }
+        })
+        .catch(() => {});
+    }
+  };
+
+  function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  async function ensureGameConnected() {
+    // 冷启动有时第一帧检测为空，自动多探几次，免得点「刷新检测」
+    if (state.dashboard?.has_game) return;
+    for (let i = 0; i < 4; i++) {
+      await sleep(350 + i * 200);
+      try {
+        const dash = await call("refresh_detection", { quiet: true });
+        state.dashboard = dash;
+        if (dash?.has_game) {
+          renderDashboard();
+          return;
+        }
+      } catch (_) {}
+    }
+    renderDashboard();
+  }
+
+  async function bootstrap() {
+    setHeaderStatus("连接后端…");
+    const boot = await call("bootstrap", { quiet: false });
+    state.dashboard = boot.dashboard;
+    state.installed = boot.installed || [];
+    state.draft = boot.draft || state.draft;
+    state.assetTypes = boot.assetTypes || [];
+    (boot.logs || []).forEach(appendLogLine);
+    fillAssetTypes();
+    renderDashboard();
+    renderInstalled();
+    renderDraftList();
+    $("#loading-overlay")?.classList.add("is-hidden");
+    $("#app")?.classList.remove("is-loading");
+    showPage("dashboard");
+
+    if (!state.dashboard?.has_game) {
+      setHeaderStatus("正在检测游戏…", false);
+      await ensureGameConnected();
+    }
+    setHeaderStatus(
+      state.dashboard?.has_game ? "游戏已连接" : "未检测到游戏",
+      !state.dashboard?.has_game
+    );
+  }
+
+  function waitForPywebview() {
+    return new Promise((resolve) => {
+      if (window.pywebview?.api?.bootstrap) {
+        resolve();
+        return;
+      }
+      window.addEventListener("pywebviewready", () => resolve(), { once: true });
+      // 兜底轮询：api 方法也要就绪，不能只有 pywebview 对象
+      let n = 0;
+      const t = setInterval(() => {
+        n += 1;
+        if (window.pywebview?.api?.bootstrap) {
+          clearInterval(t);
+          resolve();
+        } else if (n > 100) {
+          clearInterval(t);
+          resolve();
+        }
+      }, 50);
+    });
+  }
+
+  async function start() {
+    bindEvents();
+    await waitForPywebview();
+    // WebView2 偶发 ready 后第一帧 api 仍未挂全
+    await sleep(80);
+    let lastErr = null;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      try {
+        await bootstrap();
+        return;
+      } catch (err) {
+        lastErr = err;
+        await sleep(200 * (attempt + 1));
+      }
+    }
+    $("#loading-overlay")?.classList.add("is-hidden");
+    $("#app")?.classList.remove("is-loading");
+    setHeaderStatus("后端连接失败", true);
+    toast(lastErr?.message || "启动失败", true);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", start);
+  } else {
+    start();
+  }
+})();
