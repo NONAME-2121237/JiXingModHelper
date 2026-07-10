@@ -1,6 +1,4 @@
-customtkinter>=6.0.0
 Pillow>=10.0.0
 numpy>=1.24.0
 UnityPy>=1.20
-windnd>=1.0.7
-pywebview>=5.0
+bottle>=0.13

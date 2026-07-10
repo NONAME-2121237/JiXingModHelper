@@ -71,10 +71,12 @@
   }
 
   async function api(name, ...args) {
-    if (!window.pywebview || !window.pywebview.api || !window.pywebview.api[name]) {
-      throw new Error("后端未就绪（pywebview.api 不可用）");
-    }
-    const result = await window.pywebview.api[name](...args);
+    const resp = await fetch("/api/" + name, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(args),
+    });
+    const result = await resp.json();
     if (result && typeof result === "object" && "ok" in result) {
       if (!result.ok) throw new Error(result.error || "操作失败");
       return result.data;
@@ -880,33 +882,34 @@
     );
   }
 
-  function waitForPywebview() {
-    return new Promise((resolve) => {
-      if (window.pywebview?.api?.bootstrap) {
-        resolve();
-        return;
-      }
-      window.addEventListener("pywebviewready", () => resolve(), { once: true });
-      // 兜底轮询：api 方法也要就绪，不能只有 pywebview 对象
-      let n = 0;
-      const t = setInterval(() => {
-        n += 1;
-        if (window.pywebview?.api?.bootstrap) {
-          clearInterval(t);
-          resolve();
-        } else if (n > 100) {
-          clearInterval(t);
-          resolve();
-        }
-      }, 50);
-    });
+  // 后端事件改成轮询 /poll 拉取（不再依赖 pywebview 推送）
+  let eventCursor = 0;
+  async function pollEvents() {
+    try {
+      const resp = await fetch("/poll?since=" + eventCursor);
+      const data = await resp.json();
+      eventCursor = data.cursor ?? eventCursor;
+      (data.events || []).forEach((e) => window.handleBackendEvent(e));
+    } catch (_) {}
+    setTimeout(pollEvents, 700);
+  }
+
+  async function waitForBackend() {
+    // 本地服务先于页面就绪；这里轻探几次，失败也继续（bootstrap 自带重试）
+    for (let i = 0; i < 40; i++) {
+      try {
+        const r = await fetch("/poll?since=0");
+        if (r.ok) return;
+      } catch (_) {}
+      await sleep(100);
+    }
   }
 
   async function start() {
     bindEvents();
-    await waitForPywebview();
-    // WebView2 偶发 ready 后第一帧 api 仍未挂全
-    await sleep(80);
+    await waitForBackend();
+    pollEvents();
+    await sleep(30);
     let lastErr = null;
     for (let attempt = 0; attempt < 4; attempt++) {
       try {
