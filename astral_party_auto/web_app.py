@@ -76,22 +76,7 @@ def exposed(method: Callable) -> Callable:
             self._append_log(f"操作失败：{message}")
             return {"ok": False, "error": message}
 
-    wrapped._exposed = True  # type: ignore[attr-defined]
     return wrapped
-
-
-def _to_tk_filetypes(file_types) -> list:
-    """把 pywebview 风格的 file_types（'图片 (*.png;*.jpg)'）转成 tkinter 的 [(label, pattern)]。"""
-    result = []
-    for entry in file_types or ():
-        text = str(entry)
-        if "(" in text and ")" in text:
-            label = text.split("(", 1)[0].strip() or "文件"
-            patterns = text[text.find("(") + 1 : text.rfind(")")].replace(";", " ").replace(",", " ")
-            result.append((label, patterns.strip() or "*.*"))
-        else:
-            result.append((text, "*.*"))
-    return result or [("所有文件", "*.*")]
 
 
 class DesktopApi:
@@ -99,10 +84,6 @@ class DesktopApi:
         self._controller_lock = threading.RLock()
         self._logs: deque[str] = deque(maxlen=800)
         self._window = None
-        self._events: list[dict] = []
-        self._event_seq = 0
-        self._events_lock = threading.Lock()
-        self._tk_root = None
         self._image_cache: dict[tuple, str] = {}
         self._pending_mod_path: Path | None = None
         self._replacement_path: Path | None = None
@@ -111,29 +92,8 @@ class DesktopApi:
         self._mod_preview_title: str = ""
         self.controller = ModController(self._append_log)
 
-    def set_tk_root(self, root) -> None:
-        self._tk_root = root
-
-    def _run_on_ui(self, func):
-        """把需要在主线程执行的操作（tkinter 文件框）从 HTTP 线程调回主线程。"""
-        if self._tk_root is None:
-            return func()
-        box: dict = {}
-        done = threading.Event()
-
-        def wrapper():
-            try:
-                box["value"] = func()
-            except Exception as exc:  # noqa: BLE001
-                box["error"] = exc
-            finally:
-                done.set()
-
-        self._tk_root.after(0, wrapper)
-        done.wait(180)
-        if "error" in box:
-            raise box["error"]
-        return box.get("value")
+    def attach_window(self, window) -> None:
+        self._window = window
 
     def _append_log(self, message: str) -> None:
         from datetime import datetime
@@ -143,18 +103,13 @@ class DesktopApi:
         self._emit("log", {"line": line})
 
     def _emit(self, event: str, payload: dict) -> None:
-        # 事件先缓存，前端通过 /poll 轮询取走（不再依赖 pywebview 的 run_js）。
-        with self._events_lock:
-            self._event_seq += 1
-            self._events.append({"id": self._event_seq, "event": event, "payload": payload})
-            if len(self._events) > 500:
-                self._events = self._events[-500:]
-
-    def poll_events(self, since: int) -> dict:
-        with self._events_lock:
-            items = [e for e in self._events if e["id"] > int(since or 0)]
-            cursor = self._event_seq
-        return {"events": items, "cursor": cursor}
+        if self._window is None:
+            return
+        packet = json.dumps({"event": event, "payload": payload}, ensure_ascii=False)
+        try:
+            self._window.run_js(f"window.handleBackendEvent({packet})")
+        except Exception:
+            pass
 
     def _image_data(self, path: str | Path | None) -> str:
         if not path:
@@ -213,21 +168,23 @@ class DesktopApi:
             "items": [dict(item) for item in self.controller.draft_items],
         }
 
-    def _pick_path(self, kind: str, *, file_types=(), save_filename: str = "") -> Path | None:
-        """用 tkinter 原生文件框，kind = 'open' | 'folder' | 'save'。"""
-
-        def _open_dialog():
-            from tkinter import filedialog
-
-            filetypes = _to_tk_filetypes(file_types)
-            if kind == "folder":
-                return filedialog.askdirectory(title="选择文件夹")
-            if kind == "save":
-                return filedialog.asksaveasfilename(title="保存为", initialfile=save_filename or "", filetypes=filetypes)
-            return filedialog.askopenfilename(title="选择文件", filetypes=filetypes)
-
-        result = self._run_on_ui(_open_dialog)
-        return Path(result) if result else None
+    def _pick_path(self, dialog_type, *, file_types=(), save_filename: str = "") -> Path | None:
+        if self._window is None:
+            raise RuntimeError("桌面窗口还没有准备好。")
+        result = self._window.create_file_dialog(
+            dialog_type,
+            allow_multiple=False,
+            save_filename=save_filename or "",
+            file_types=tuple(file_types) if file_types else (),
+        )
+        if not result:
+            return None
+        # pywebview 有时返回 str，有时 list/tuple
+        if isinstance(result, (list, tuple)):
+            if not result:
+                return None
+            return Path(result[0])
+        return Path(result)
 
     @exposed
     def bootstrap(self) -> dict:
@@ -292,11 +249,15 @@ class DesktopApi:
 
     @exposed
     def choose_mod(self, mode: str) -> dict | None:
+        import webview
+
+        folder = getattr(getattr(webview, "FileDialog", None), "FOLDER", None) or webview.FOLDER_DIALOG
+        open_dlg = getattr(getattr(webview, "FileDialog", None), "OPEN", None) or webview.OPEN_DIALOG
         if mode == "folder":
-            path = self._pick_path("folder")
+            path = self._pick_path(folder)
         else:
             path = self._pick_path(
-                "open",
+                open_dlg,
                 file_types=("Mod 压缩包 (*.zip;*.rar)", "所有文件 (*.*)"),
             )
         if path is None:
@@ -484,6 +445,8 @@ class DesktopApi:
 
     @exposed
     def export_selection(self, variant: str = "primary") -> dict | None:
+        import webview
+
         selection = self.controller.selection
         if not selection:
             raise RuntimeError("请先选择资源。")
@@ -495,8 +458,9 @@ class DesktopApi:
             default_name = str(Path(default_name).with_suffix(f".{fmt}"))
         elif asset_type == "anim" and variant == "secondary":
             default_name = str(Path(default_name).with_suffix(".animbin"))
+        save_dlg = getattr(getattr(webview, "FileDialog", None), "SAVE", None) or webview.SAVE_DIALOG
         file_path = self._pick_path(
-            "save",
+            save_dlg,
             save_filename=default_name,
             file_types=("所有文件 (*.*)",),
         )
@@ -507,6 +471,8 @@ class DesktopApi:
 
     @exposed
     def choose_replacement(self) -> dict | None:
+        import webview
+
         selection = self.controller.selection
         if not selection:
             raise RuntimeError("请先选择资源。")
@@ -518,7 +484,8 @@ class DesktopApi:
             )
         else:
             raise RuntimeError("当前类型不需要选择替换文件。")
-        path = self._pick_path("open", file_types=file_types)
+        open_dlg = getattr(getattr(webview, "FileDialog", None), "OPEN", None) or webview.OPEN_DIALOG
+        path = self._pick_path(open_dlg, file_types=file_types)
         if path is None:
             return None
         self._replacement_path = path
@@ -581,8 +548,11 @@ class DesktopApi:
 
     @exposed
     def replace_draft_image(self, index: int) -> dict | None:
+        import webview
+
+        open_dlg = getattr(getattr(webview, "FileDialog", None), "OPEN", None) or webview.OPEN_DIALOG
         path = self._pick_path(
-            "open",
+            open_dlg,
             file_types=("图片 (*.png;*.jpg;*.jpeg;*.webp;*.bmp)", "所有文件 (*.*)"),
         )
         if path is None:
@@ -730,132 +700,60 @@ def _apply_windows_icon(window_title: str, ico_path: Path) -> None:
         set_on(h)
 
 
-def _find_edge() -> str | None:
-    for path in (
-        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
-        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
-    ):
-        if os.path.exists(path):
-            return path
-    import shutil
-
-    return shutil.which("msedge")
-
-
-def _free_port() -> int:
-    import socket
-
-    sock = socket.socket()
-    sock.bind(("127.0.0.1", 0))
-    port = int(sock.getsockname()[1])
-    sock.close()
-    return port
-
-
-def _build_server(api: "DesktopApi"):
-    """把 DesktopApi 的 @exposed 方法包成一个本地 HTTP 服务（前端用 fetch 调）。"""
-    import bottle
-
-    web_root = str(WEB_DIR)
-    app = bottle.Bottle()
-
-    @app.get("/")
-    def _index():
-        return bottle.static_file("index.html", root=web_root)
-
-    @app.get("/poll")
-    def _poll():
-        bottle.response.content_type = "application/json"
-        return json.dumps(api.poll_events(bottle.request.query.get("since", "0")), ensure_ascii=False)
-
-    @app.post("/api/<name>")
-    def _call(name):
-        bottle.response.content_type = "application/json"
-        method = getattr(api, name, None)
-        if method is None or not getattr(method, "_exposed", False):
-            bottle.response.status = 404
-            return json.dumps({"ok": False, "error": f"未知接口 {name}"}, ensure_ascii=False)
-        try:
-            args = bottle.request.json
-        except Exception:
-            args = None
-        if not isinstance(args, list):
-            args = []
-        return json.dumps(method(*args), ensure_ascii=False)
-
-    @app.get("/<path:path>")
-    def _static(path):
-        return bottle.static_file(path, root=web_root)
-
-    return app
-
-
 def main() -> None:
-    import tkinter as tk
-    from socketserver import ThreadingMixIn
-    from wsgiref.simple_server import WSGIServer, make_server
+    _configure_frozen_pythonnet()
+    import webview
 
     _set_windows_app_id()
     os.chdir(APP_ROOT)
+    # 打包后 webui 在 _MEIPASS，需重新解析
     global WEB_DIR
     WEB_DIR = _web_dir()
-    if not (WEB_DIR / "index.html").exists():
-        raise FileNotFoundError(f"找不到界面文件：{WEB_DIR / 'index.html'}")
-
     api = DesktopApi()
-
-    # 隐藏的 tkinter 主窗：只用来弹原生文件对话框 + 保持进程存活（不显示任何界面）
-    root = tk.Tk()
-    root.withdraw()
-    api.set_tk_root(root)
-
-    class _ThreadingWSGIServer(ThreadingMixIn, WSGIServer):
-        daemon_threads = True
-
-    port = _free_port()
-    httpd = make_server("127.0.0.1", port, _build_server(api), server_class=_ThreadingWSGIServer)
-    threading.Thread(target=httpd.serve_forever, daemon=True).start()
-
-    url = f"http://127.0.0.1:{port}/"
-    edge = _find_edge()
-    if edge:
-        profile = str((DATA_DIR / "edge_profile").resolve())
-        proc = subprocess.Popen(
-            [
-                edge,
-                f"--app={url}",
-                f"--user-data-dir={profile}",
-                "--no-first-run",
-                "--no-default-browser-check",
-                "--window-size=1120,760",
-            ],
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
+    index = (WEB_DIR / "index.html").resolve()
+    if not index.exists():
+        raise FileNotFoundError(f"找不到界面文件：{index}")
+    url = index.as_uri()
+    icon = ASSETS_DIR / "app_icon.ico"
+    if not icon.exists():
+        icon = APP_ROOT / "assets" / "app_icon.ico"
+    title = "吉星派对 Mod 助手"
+    window_kwargs = {
+        "title": title,
+        "url": url,
+        "js_api": api,
+        "width": 1100,
+        "height": 720,
+        "min_size": (860, 600),
+        "resizable": True,
+        "background_color": "#141019",
+        "text_select": False,
+    }
+    if icon.exists():
+        try:
+            window = webview.create_window(**window_kwargs, icon=str(icon.resolve()))
+        except TypeError:
+            window = webview.create_window(**window_kwargs)
     else:
-        import webbrowser
+        window = webview.create_window(**window_kwargs)
+    api.attach_window(window)
 
-        webbrowser.open(url)
-        proc = None
+    def after_start() -> None:
+        # WebView2 建窗偏晚，多刷几次图标
+        import time
 
-    # Edge 窗口关闭 → 退出程序
-    def _watch():
-        if proc is not None:
-            proc.wait()
-        else:
-            import time
+        if not icon.exists():
+            return
+        for delay in (0.2, 0.5, 1.0, 2.0, 3.5):
+            time.sleep(delay)
+            try:
+                _apply_windows_icon(title, icon)
+            except Exception:
+                pass
 
-            while True:
-                time.sleep(3600)
-        try:
-            root.after(0, root.destroy)
-        except Exception:
-            pass
+    debug = os.environ.get("ASTRAL_WEB_DEBUG", "").strip() == "1"
 
-    threading.Thread(target=_watch, daemon=True).start()
-    try:
-        root.mainloop()
-    finally:
-        try:
-            httpd.shutdown()
-        except Exception:
-            pass
+    def boot():
+        threading.Thread(target=after_start, daemon=True).start()
+
+    webview.start(func=boot, debug=debug)

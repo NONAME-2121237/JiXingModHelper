@@ -24,16 +24,27 @@ hiddenimports = [
     "astral_party_auto.app",
     "astral_party_auto.web_app",
     "astral_party_auto.mod_controller",
+    "astral_party_auto.ui.main_window",
+    "webview.platforms.edgechromium",
+    "webview.platforms.winforms",
     "bottle",
+    "proxy_tools",
+    "clr",
+    "clr_loader",
+    "pythonnet",
+    "windnd",
 ]
 
 for pkg in (
+    "webview",
     "UnityPy",
+    "customtkinter",
     "texture2ddecoder",
     "etcpak",
     "astc_encoder",
     "fmod_toolkit",
     "PIL",
+    "darkdetect",
 ):
     d, b, h = gather(pkg)
     datas += d
@@ -58,15 +69,25 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    # HTML 界面改成本地服务 + Edge，不再用 pywebview/pythonnet/customtkinter，全部排除。
-    excludes=[
-        "pandas", "matplotlib", "scipy", "IPython", "notebook",
-        "webview", "pythonnet", "clr", "clr_loader", "customtkinter",
-        "darkdetect", "windnd", "proxy_tools",
-    ],
+    excludes=["pandas", "matplotlib", "scipy", "IPython", "notebook"],
     noarchive=False,
     optimize=0,
 )
+
+# 剔除 pythonnet/runtime 里的 coreclr facade（netstandard.dll / System.*.dll 等，约 90 多个）。
+# 打包版用 .NET Framework(netfx) 加载 Python.Runtime.dll，这些 coreclr facade 会冲突，
+# 导致 "Failed to resolve Python.Runtime.Loader.Initialize"，HTML 界面掉回卡顿的 Tk 兼容界面。
+_KEEP_IN_RT = {"python.runtime.dll", "python.runtime.xml"}
+
+
+def _drop_coreclr_facade(entry):
+    dest = str(entry[0]).replace("\\", "/").lower()
+    if "pythonnet/runtime/" in dest:
+        return dest.rsplit("/", 1)[-1] in _KEEP_IN_RT
+    return True
+
+
+a.datas = [entry for entry in a.datas if _drop_coreclr_facade(entry)]
 
 pyz = PYZ(a.pure)
 
