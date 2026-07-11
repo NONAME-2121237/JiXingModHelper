@@ -567,7 +567,15 @@ class DesktopApi:
         if path is None:
             return None
         item = self.controller.update_draft_texture(int(index), path)
-        return {"item": item, "draft": self._draft_state()}
+        # “我的作品集”里的换图是面向已安装效果的操作：选完新图后
+        # 立即重新安装当前作品集，避免用户还要再猜一次“安装到游戏”。
+        self.controller.install_draft()
+        return {
+            "item": item,
+            "draft": self._draft_state(),
+            "installed": self.controller.installed_mods(),
+            "dashboard": self._dashboard_state(),
+        }
 
     @exposed
     def pick_draft_crop_source(self, index: int) -> dict | None:
@@ -610,7 +618,13 @@ class DesktopApi:
         item = self.controller.update_draft_texture(self._draft_crop_index, self._draft_crop_path, crop_box=box)
         self._draft_crop_path = None
         self._draft_crop_index = None
-        return {"item": item, "draft": self._draft_state()}
+        self.controller.install_draft()
+        return {
+            "item": item,
+            "draft": self._draft_state(),
+            "installed": self.controller.installed_mods(),
+            "dashboard": self._dashboard_state(),
+        }
 
     @exposed
     def remove_draft_item(self, index: int) -> dict:

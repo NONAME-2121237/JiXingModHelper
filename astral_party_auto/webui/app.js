@@ -695,10 +695,14 @@
     $("#draft-replace")?.addEventListener("click", async () => {
       if (state.draftIndex < 0) return;
       try {
-        const data = await call("replace_draft_image", { busy: true, busyText: "换图中…" }, state.draftIndex);
+        const data = await call("replace_draft_image", { busy: true, busyText: "换图并安装中…" }, state.draftIndex);
         if (!data) return;
         state.draft = data.draft;
-        toast("已更新作品集项");
+        state.installed = data.installed || state.installed;
+        state.dashboard = data.dashboard || state.dashboard;
+        renderInstalled();
+        renderDashboard();
+        toast("换图完成，已写入游戏");
         await showDraftDetail(state.draftIndex);
       } catch (_) {}
     });
@@ -1015,9 +1019,13 @@
         targetW: data.target_width,
         targetH: data.target_height,
         onConfirm: async (box) => {
-          const res = await call("commit_draft_crop", { busy: true, busyText: "裁剪写入…" }, box);
+          const res = await call("commit_draft_crop", { busy: true, busyText: "裁剪并安装中…" }, box);
           state.draft = res.draft;
-          toast("已裁剪并更新作品集项");
+          state.installed = res.installed || state.installed;
+          state.dashboard = res.dashboard || state.dashboard;
+          renderInstalled();
+          renderDashboard();
+          toast("裁剪换图完成，已写入游戏");
           await showDraftDetail(state.draftIndex);
         },
       });

@@ -5,14 +5,23 @@ namespace JiXingModHelperHost;
 
 internal static class Program
 {
+    private const string WindowTitle = "吉星派对 Mod 助手";
+
     [STAThread]
     private static void Main(string[] args)
     {
         ApplicationConfiguration.Initialize();
+        using var instanceMutex = new Mutex(true, @"Local\JiXingModHelper.SingleInstance", out var isFirstInstance);
+        if (!isFirstInstance)
+        {
+            ActivateExistingWindow();
+            return;
+        }
+
         var url = ReadArgument(args, "--url");
         if (string.IsNullOrWhiteSpace(url))
         {
-            MessageBox.Show("缺少本地页面地址。", "吉星派对 Mod 助手", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show("缺少本地页面地址。", WindowTitle, MessageBoxButtons.OK, MessageBoxIcon.Error);
             return;
         }
 
@@ -22,6 +31,19 @@ internal static class Program
             ReadArgument(args, "--icon")
         );
         Application.Run(window);
+    }
+
+    private static void ActivateExistingWindow()
+    {
+        var window = NativeMethods.FindWindow(null, WindowTitle);
+        if (window == IntPtr.Zero)
+        {
+            return;
+        }
+
+        const int RestoreWindow = 9;
+        NativeMethods.ShowWindow(window, RestoreWindow);
+        NativeMethods.SetForegroundWindow(window);
     }
 
     private static string ReadArgument(IReadOnlyList<string> args, string name)
@@ -37,11 +59,26 @@ internal static class Program
     }
 }
 
+internal static class NativeMethods
+{
+    [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    internal static extern IntPtr FindWindow(string? className, string windowName);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+    internal static extern bool ShowWindow(IntPtr window, int command);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+    internal static extern bool SetForegroundWindow(IntPtr window);
+}
+
 internal sealed class MainWindow : Form
 {
     private readonly WebView2 _webView = new() { Dock = DockStyle.Fill };
     private readonly string _url;
     private readonly string _profilePath;
+    private bool _webViewInitialized;
 
     public MainWindow(string url, string profilePath, string iconPath)
     {
@@ -71,6 +108,12 @@ internal sealed class MainWindow : Form
 
     private async Task InitializeWebViewAsync()
     {
+        if (_webViewInitialized)
+        {
+            return;
+        }
+        _webViewInitialized = true;
+
         try
         {
             if (!string.IsNullOrWhiteSpace(_profilePath))
@@ -88,6 +131,19 @@ internal sealed class MainWindow : Form
                 options: options
             );
             await _webView.EnsureCoreWebView2Async(environment);
+            _webView.CoreWebView2.NewWindowRequested += (_, eventArgs) =>
+            {
+                // 助手只使用当前本地页面。任何 window.open / target=_blank 都不应
+                // 拉起系统浏览器或再生成一个 WebView 窗口。
+                eventArgs.Handled = true;
+            };
+            _webView.CoreWebView2.NavigationStarting += (_, eventArgs) =>
+            {
+                if (!IsLocalNavigation(eventArgs.Uri))
+                {
+                    eventArgs.Cancel = true;
+                }
+            };
             _webView.Source = new Uri(_url);
         }
         catch (Exception exception)
@@ -100,5 +156,18 @@ internal sealed class MainWindow : Form
             );
             Close();
         }
+    }
+
+    private bool IsLocalNavigation(string target)
+    {
+        if (!Uri.TryCreate(_url, UriKind.Absolute, out var home) ||
+            !Uri.TryCreate(target, UriKind.Absolute, out var destination))
+        {
+            return false;
+        }
+
+        return string.Equals(home.Scheme, destination.Scheme, StringComparison.OrdinalIgnoreCase) &&
+               string.Equals(home.Host, destination.Host, StringComparison.OrdinalIgnoreCase) &&
+               home.Port == destination.Port;
     }
 }
