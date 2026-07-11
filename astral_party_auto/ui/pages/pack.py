@@ -10,7 +10,7 @@ from PIL import Image
 
 from ...mod_controller import MADE_DIR
 from ..theme import COLORS, font
-from ..widgets import FlowButtonBar, make_button
+from ..widgets import FlowButtonBar
 from .crop_dialog import CropDialog
 
 

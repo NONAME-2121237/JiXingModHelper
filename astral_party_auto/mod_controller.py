@@ -540,21 +540,6 @@ class ModController:
         self.log(f"已导出：{out}")
         return out
 
-    def export_selection_image(
-        self,
-        dest: str | Path,
-        *,
-        fmt: str = "png",
-        quality: int = 92,
-    ) -> Path:
-        """兼容旧接口：贴图 PNG/JPEG。"""
-        if not self.selection:
-            raise RuntimeError("还没有选中资源。")
-        kind = self.selection.get("asset_type") or "texture"
-        if kind != "texture":
-            return self.export_selection(dest, fmt=fmt)
-        return self.export_selection(dest, fmt=fmt)
-
     def default_export_filename(self) -> str:
         if not self.selection:
             return "export.bin"
@@ -877,14 +862,7 @@ class ModController:
         self.log(f"已导出作品集文件夹：{final_dir}")
         return final_dir
 
-    def make_mod(self, bundle_path: str | Path, image_path: str | Path, out_name: str | None = None) -> Path:
-        """兼容旧接口：单张替换并加入作品集后导出目录。"""
-        self.add_texture_to_draft(bundle_path, image_path)
-        if out_name:
-            self.set_draft_name(out_name)
-        return self.export_draft(as_zip=False)
-
-    # ---------- 后台建索引 + 搜索 ----------
+    # ---------- 后台建索引 ----------
     def build_index_async(self, progress: Callable[[int, int], None], on_done: Callable[[int], None]) -> None:
         if self._indexing or not self.has_game:
             return
@@ -906,9 +884,6 @@ class ModController:
                 self._indexing = False
 
         threading.Thread(target=worker, daemon=True).start()
-
-    def search(self, query: str, limit: int = 200) -> list[tuple[str, str]]:
-        return self.browse("all", query, limit, asset_type="texture")
 
     @property
     def index_ready(self) -> bool:

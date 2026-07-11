@@ -9,7 +9,7 @@ import customtkinter as ctk
 from PIL import Image
 
 from ..theme import COLORS, font
-from ..widgets import FlowButtonBar, enable_mousewheel, make_button
+from ..widgets import FlowButtonBar, enable_mousewheel
 from .crop_dialog import CropDialog
 
 try:

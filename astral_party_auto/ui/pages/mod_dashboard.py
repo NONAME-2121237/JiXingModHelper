@@ -3,7 +3,7 @@ from __future__ import annotations
 import customtkinter as ctk
 
 from ..theme import COLORS, font
-from ..widgets import Card, FlowButtonBar, StatTile, enable_mousewheel, make_button
+from ..widgets import Card, FlowButtonBar, StatTile, enable_mousewheel
 
 
 class ModDashboardPage(ctk.CTkFrame):

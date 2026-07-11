@@ -1,19 +1,17 @@
-"""HTML/CSS 桌面界面：pywebview 只负责窗口，资源处理仍复用 ModController。"""
+"""HTML 界面的本地接口层：窗口由 C# WebView2 承载，资源处理复用 ModController。"""
 from __future__ import annotations
 
 import base64
 import json
 import mimetypes
 import os
-import subprocess
-import sys
 import threading
 from collections import deque
 from functools import wraps
 from pathlib import Path
 from typing import Any, Callable
 
-from .core.config import APP_ROOT, ASSETS_DIR, RESOURCE_ROOT
+from .core.config import APP_ROOT, RESOURCE_ROOT
 from .mod_controller import DATA_DIR, MADE_DIR, ModController
 from .modkit.categories import ASSET_TYPES, dedupe_by_texture_name
 
@@ -32,24 +30,6 @@ def _web_dir() -> Path:
 
 
 WEB_DIR = _web_dir()
-
-
-def _configure_frozen_pythonnet() -> None:
-    """打包版：强制用 Windows 自带的 .NET Framework(netfx)，并指向随程序的 Python DLL。
-
-    不设 netfx，pythonnet 3.x 会去找 .NET Core，精简系统上直接崩。netfx（4.7.2+）Win10/11 一定有。
-    另外 build_exe.spec 会把 pythonnet/runtime 里的 coreclr facade（netstandard/System.*）剔掉，
-    否则 netfx 加载 Python.Runtime.dll 时和这些 facade 冲突，报 Loader.Initialize 失败。
-    """
-    if not getattr(sys, "frozen", False):
-        return
-    os.environ.setdefault("PYTHONNET_RUNTIME", "netfx")
-    runtime_root = Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent))
-    for base in {runtime_root, runtime_root / "_internal", Path(sys.executable).resolve().parent}:
-        python_dll = base / f"python{sys.version_info.major}{sys.version_info.minor}.dll"
-        if python_dll.exists():
-            os.environ.setdefault("PYTHONNET_PYDLL", str(python_dll))
-            break
 
 
 def _json_safe(value: Any) -> Any:
@@ -98,7 +78,6 @@ class DesktopApi:
     def __init__(self) -> None:
         self._controller_lock = threading.RLock()
         self._logs: deque[str] = deque(maxlen=800)
-        self._window = None
         self._events: list[dict] = []
         self._event_seq = 0
         self._events_lock = threading.Lock()
@@ -283,10 +262,6 @@ class DesktopApi:
         os.startfile(str(MADE_DIR))
         return True
 
-    @exposed
-    def get_installed_mods(self) -> list[dict]:
-        return self.controller.installed_mods()
-
     def _set_mod_preview_files(self, files: dict[str, Path], title: str) -> list[str]:
         self._mod_preview_files = dict(files)
         self._mod_preview_title = title
@@ -440,21 +415,6 @@ class DesktopApi:
     @exposed
     def preview_mod_bundle(self, bundle_name: str) -> dict:
         return self._preview_mod_bundle_impl(bundle_name)
-
-    @exposed
-    def preview_installed_mod(self, name: str) -> dict:
-        """兼容旧调用：加载列表并返回第一张预览。"""
-        data = self._load_mod_preview_impl(name)
-        first = data.get("first") or {}
-        return {
-            "bundle": first.get("bundle", ""),
-            "texture": first.get("texture", ""),
-            "size": first.get("size", ""),
-            "preview_data": first.get("preview_data", ""),
-            "title": data.get("title", ""),
-            "bundles": data.get("bundles", []),
-            "name": name,
-        }
 
     @exposed
     def get_categories(self, asset_type: str) -> list[dict]:
@@ -701,18 +661,6 @@ class DesktopApi:
         self._logs.clear()
         return []
 
-    @exposed
-    def launch_legacy_ui(self) -> bool:
-        if getattr(sys, "frozen", False):
-            raise RuntimeError("打包版请使用默认界面；开发环境可用 --legacy。")
-        creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        subprocess.Popen(
-            [sys.executable, "-m", "astral_party_auto", "--legacy"],
-            cwd=str(APP_ROOT),
-            creationflags=creation_flags,
-        )
-        return True
-
 
 def _set_windows_app_id() -> None:
     try:
@@ -723,73 +671,6 @@ def _set_windows_app_id() -> None:
         )
     except Exception:
         pass
-
-
-def _apply_windows_icon(window_title: str, ico_path: Path) -> None:
-    """EdgeChromium/pywebview 任务栏常仍是 Python 图标，用 Win32 强制换掉。"""
-    if os.name != "nt" or not ico_path.exists():
-        return
-    try:
-        import ctypes
-        from ctypes import wintypes
-    except Exception:
-        return
-
-    user32 = ctypes.windll.user32
-    IMAGE_ICON = 1
-    LR_LOADFROMFILE = 0x0010
-    WM_SETICON = 0x0080
-    ICON_SMALL, ICON_BIG = 0, 1
-    GW_OWNER = 4
-
-    ico = str(ico_path.resolve())
-    h_big = user32.LoadImageW(0, ico, IMAGE_ICON, 32, 32, LR_LOADFROMFILE)
-    h_sm = user32.LoadImageW(0, ico, IMAGE_ICON, 16, 16, LR_LOADFROMFILE)
-    if not h_big:
-        h_big = user32.LoadImageW(0, ico, IMAGE_ICON, 0, 0, LR_LOADFROMFILE)
-    if not h_sm:
-        h_sm = h_big
-    if not h_big and not h_sm:
-        return
-
-    def set_on(hwnd: int) -> None:
-        if not hwnd:
-            return
-        if h_big:
-            user32.SendMessageW(hwnd, WM_SETICON, ICON_BIG, h_big)
-        if h_sm:
-            user32.SendMessageW(hwnd, WM_SETICON, ICON_SMALL, h_sm)
-
-    # 按标题找主窗；再补 owner（任务栏有时挂在 owner 上）
-    hwnd = int(user32.FindWindowW(None, window_title) or 0)
-    if not hwnd:
-        # 模糊：枚举含标题的顶层窗
-        titles = (window_title, "吉星派对 Mod 助手")
-        found: list[int] = []
-
-        @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
-        def enum_cb(h, _lp):
-            buf = ctypes.create_unicode_buffer(512)
-            user32.GetWindowTextW(h, buf, 512)
-            text = buf.value or ""
-            if any(t in text for t in titles):
-                found.append(int(h))
-            return True
-
-        user32.EnumWindows(enum_cb, 0)
-        hwnd = found[0] if found else 0
-
-    targets = []
-    if hwnd:
-        targets.append(hwnd)
-        owner = int(user32.GetWindow(hwnd, GW_OWNER) or 0)
-        parent = int(user32.GetParent(hwnd) or 0)
-        if owner:
-            targets.append(owner)
-        if parent:
-            targets.append(parent)
-    for h in targets:
-        set_on(h)
 
 
 def _free_port() -> int:

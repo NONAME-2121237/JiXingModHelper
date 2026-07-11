@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Callable, Iterable
 
 import UnityPy
-from PIL import Image
 
 
 # 资源包相对客户端 exe 所在目录的位置
@@ -123,16 +122,6 @@ def _empty_typed_index() -> dict[str, dict[str, list[str]]]:
     return {k: {} for k in ASSET_TYPE_KEYS}
 
 
-def build_texture_index(
-    aa_dir: str | Path,
-    cache_path: str | Path,
-    progress: Callable[[int, int, str], bool] | None = None,
-) -> dict[str, list[str]]:
-    """兼容旧接口：只返回贴图索引；缓存会写成多类型 v2。"""
-    typed = build_asset_index(aa_dir, cache_path, progress=progress)
-    return typed.get("texture", {})
-
-
 def build_asset_index(
     aa_dir: str | Path,
     cache_path: str | Path,
@@ -201,8 +190,3 @@ def load_asset_index(cache_path: str | Path) -> dict[str, dict[str, list[str]]]:
             if isinstance(names, list)
         }
     return typed
-
-
-def load_texture_index(cache_path: str | Path) -> dict[str, list[str]]:
-    """兼容旧接口：只返回贴图部分。"""
-    return load_asset_index(cache_path).get("texture", {})

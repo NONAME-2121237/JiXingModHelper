@@ -6,10 +6,8 @@ from .bundles import (
     AA_SUBPATH,
     aa_dir_for_exe,
     build_asset_index,
-    build_texture_index,
     extract_texture_png,
     load_asset_index,
-    load_texture_index,
     read_bundle_textures,
 )
 from .categories import (
@@ -41,10 +39,8 @@ __all__ = [
     "AA_SUBPATH",
     "aa_dir_for_exe",
     "build_asset_index",
-    "build_texture_index",
     "extract_texture_png",
     "load_asset_index",
-    "load_texture_index",
     "read_bundle_textures",
     "ADVANCED_IDS",
     "ASSET_TYPES",
