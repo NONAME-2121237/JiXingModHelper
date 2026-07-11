@@ -122,9 +122,6 @@ python -m pip install -r requirements.txt
 # 直接跑（默认 HTML 前端，由原生 WebView2 窗口承载）
 python -m astral_party_auto
 
-# 可选：回退原项目的 customtkinter 界面
-python -m astral_party_auto --legacy
-
 # 打包成 exe
 powershell -ExecutionPolicy Bypass -File .\build_exe.ps1
 ```
@@ -157,6 +154,5 @@ powershell -ExecutionPolicy Bypass -File .\build_exe.ps1
 
 - [UnityPy](https://github.com/K0lb3/UnityPy) — 读写 Unity 资源
 - [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/) — C# 原生窗口与 HTML 前端容器
-- [customtkinter](https://github.com/TomSchimansky/CustomTkinter) — 可选的兼容界面
 
 有问题开 Issue，PR 也欢迎，尽量小而清楚就行。

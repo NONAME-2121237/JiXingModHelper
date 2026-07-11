@@ -26,21 +26,17 @@ hiddenimports = [
     "astral_party_auto.native_host_app",
     "astral_party_auto.web_app",
     "astral_party_auto.mod_controller",
-    "astral_party_auto.ui.main_window",
     "bottle",
-    "windnd",
 ]
 
 for pkg in (
     "UnityPy",
-    "customtkinter",
     "texture2ddecoder",
     "etcpak",
     "astc_encoder",
     "archspec",  # astc_encoder 读图时需要 json/cpu 数据，漏了会预览报 No such file
     "fmod_toolkit",
     "PIL",
-    "darkdetect",
 ):
     d, b, h = gather(pkg)
     datas += d
@@ -77,6 +73,7 @@ a = Analysis(
     excludes=[
         "pandas", "matplotlib", "scipy", "IPython", "notebook",
         "webview", "pythonnet", "clr", "clr_loader", "proxy_tools",
+        "customtkinter", "windnd", "darkdetect",
     ],
     noarchive=False,
     optimize=0,
