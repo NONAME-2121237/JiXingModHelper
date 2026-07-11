@@ -157,6 +157,7 @@
             <div class="action-row studio-actions">
               <button class="button ghost" data-page-link="browse">← 回浏览</button>
               <button id="choose-replacement" class="button ghost">选择替换文件</button>
+              <button id="crop-replacement" class="button ghost" disabled>裁剪</button>
               <button id="commit-replacement" class="button primary">确认替换并加入作品集</button>
               <button class="button purple" data-page-link="pack">打开作品集 →</button>
             </div>
@@ -178,6 +179,7 @@
               </div>
               <div class="action-row">
                 <button id="draft-replace" class="button primary" disabled>换图…</button>
+                <button id="draft-crop" class="button ghost" disabled>裁剪换图…</button>
                 <button id="draft-remove" class="button danger" disabled>移除这项</button>
               </div>
               <div class="action-row">
@@ -203,6 +205,29 @@
   <div id="loading-overlay" class="loading-overlay"><div class="spinner"></div><span>正在连接本地后端…</span></div>
   <div id="busy-overlay" class="busy-overlay is-hidden"><div class="spinner"></div><span id="busy-text">处理中…</span></div>
   <div id="toast-region" class="toast-region" aria-live="polite"></div>
+
+  <div id="crop-modal" class="modal-overlay is-hidden">
+    <div class="modal crop-modal">
+      <h3>裁剪替换图</h3>
+      <p class="modal-hint">拖动粉框移动位置；拖角上的小圆点调整大小。</p>
+      <div id="crop-stage" class="crop-stage">
+        <img id="crop-image" alt="">
+        <div id="crop-box" class="crop-box">
+          <div class="crop-handle" data-handle="nw"></div>
+          <div class="crop-handle" data-handle="ne"></div>
+          <div class="crop-handle" data-handle="sw"></div>
+          <div class="crop-handle" data-handle="se"></div>
+        </div>
+      </div>
+      <p id="crop-info" class="modal-hint"></p>
+      <div class="action-row">
+        <button id="crop-smart" class="button ghost">贴合原资源比例</button>
+        <button id="crop-reset" class="button ghost">重置为整图</button>
+        <button id="crop-cancel" class="button ghost">取消</button>
+        <button id="crop-confirm" class="button primary">确认裁剪</button>
+      </div>
+    </div>
+  </div>
   <script src="app.js" defer></script>
 </body>
 </html>

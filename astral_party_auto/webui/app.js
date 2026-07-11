@@ -43,6 +43,11 @@
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
+  // 裁剪弹窗状态：cropState 保存图片几何信息 + 当前框；cropPending 保存确认后的回调
+  let cropState = null;
+  let cropPending = null;
+  let cropDrag = null;
+
   function toast(message, isError = false) {
     const region = $("#toast-region");
     if (!region || !message) return;
@@ -465,21 +470,26 @@
     const imageMode = $("#studio-image-mode");
     const textMode = $("#studio-text-mode");
     const chooseBtn = $("#choose-replacement");
+    const cropBtn = $("#crop-replacement");
     if (kind === "text") {
       imageMode.classList.add("is-hidden");
       textMode.classList.remove("is-hidden");
       chooseBtn.classList.add("is-hidden");
+      cropBtn?.classList.add("is-hidden");
       $("#studio-text").value = sel.full_text || sel.text_preview || "";
     } else if (kind === "mesh") {
       imageMode.classList.remove("is-hidden");
       textMode.classList.add("is-hidden");
       chooseBtn.classList.add("is-hidden");
+      cropBtn?.classList.add("is-hidden");
       setMedia($("#studio-original"), null, "3D 模型仅导出");
       setMedia($("#studio-replacement"), null, "不支持替换");
     } else {
       imageMode.classList.remove("is-hidden");
       textMode.classList.add("is-hidden");
       chooseBtn.classList.remove("is-hidden");
+      cropBtn?.classList.remove("is-hidden");
+      if (cropBtn) cropBtn.disabled = !state.replacement?.preview_data;
       setMedia($("#studio-original"), sel.preview_data, "无预览图");
       if (state.replacement?.preview_data) {
         setMedia($("#studio-replacement"), state.replacement.preview_data, state.replacement.name);
@@ -536,6 +546,7 @@
       setMedia($("#draft-original"), null, "—");
       setMedia($("#draft-modified"), null, "—");
       $("#draft-replace").disabled = true;
+      $("#draft-crop").disabled = true;
       $("#draft-remove").disabled = true;
     }
   }
@@ -550,6 +561,7 @@
       setMedia($("#draft-original"), data.original_data, "无预览");
       setMedia($("#draft-modified"), data.modified_data, "无预览");
       $("#draft-replace").disabled = item.kind !== "texture";
+      $("#draft-crop").disabled = item.kind !== "texture";
       $("#draft-remove").disabled = false;
     } catch (err) {
       toast(err.message, true);
@@ -648,7 +660,31 @@
     $("#export-secondary")?.addEventListener("click", () => exportSelection("secondary"));
 
     $("#choose-replacement")?.addEventListener("click", chooseReplacement);
+    $("#crop-replacement")?.addEventListener("click", cropReplacement);
     $("#commit-replacement")?.addEventListener("click", commitReplacement);
+
+    $("#crop-smart")?.addEventListener("click", smartCropBox);
+    $("#crop-reset")?.addEventListener("click", resetCropFull);
+    $("#crop-cancel")?.addEventListener("click", closeCropModal);
+    $("#crop-confirm")?.addEventListener("click", async () => {
+      if (!cropState || !cropPending) return;
+      const box = cropState.box.map((v) => Math.round(v));
+      const onConfirm = cropPending.onConfirm;
+      closeCropModal();
+      try {
+        await onConfirm(box);
+      } catch (_) {}
+    });
+    $("#crop-box")?.addEventListener("pointerdown", (e) => {
+      if (!cropState || e.target.closest(".crop-handle")) return;
+      startCropDrag("move", e);
+    });
+    $$(".crop-handle").forEach((handle) => {
+      handle.addEventListener("pointerdown", (e) => {
+        e.stopPropagation();
+        startCropDrag(handle.dataset.handle, e);
+      });
+    });
 
     $("#draft-name")?.addEventListener("change", async (e) => {
       try {
@@ -666,6 +702,7 @@
         await showDraftDetail(state.draftIndex);
       } catch (_) {}
     });
+    $("#draft-crop")?.addEventListener("click", cropReplaceDraft);
     $("#draft-remove")?.addEventListener("click", async () => {
       if (state.draftIndex < 0) return;
       try {
@@ -789,7 +826,195 @@
       if (!data) return;
       state.replacement = data;
       setMedia($("#studio-replacement"), data.preview_data, data.name);
+      const cropBtn = $("#crop-replacement");
+      if (cropBtn) cropBtn.disabled = !data.preview_data;
       toast(`已选择：${data.name}`);
+    } catch (_) {}
+  }
+
+  // ---------- 裁剪弹窗 ----------
+  function openCropModal({ url, targetW, targetH, onConfirm }) {
+    const modal = $("#crop-modal");
+    const img = $("#crop-image");
+    if (!modal || !img) return;
+    cropPending = { onConfirm };
+    cropState = null;
+    modal.classList.remove("is-hidden");
+    img.onload = () => {
+      const stage = $("#crop-stage");
+      const stageRect = stage.getBoundingClientRect();
+      const imgRect = img.getBoundingClientRect();
+      cropState = {
+        natW: img.naturalWidth,
+        natH: img.naturalHeight,
+        scale: imgRect.width / (img.naturalWidth || 1),
+        offsetX: imgRect.left - stageRect.left,
+        offsetY: imgRect.top - stageRect.top,
+        box: [0, 0, img.naturalWidth, img.naturalHeight],
+        targetW: targetW || 0,
+        targetH: targetH || 0,
+      };
+      smartCropBox();
+    };
+    img.src = url;
+  }
+
+  function closeCropModal() {
+    $("#crop-modal")?.classList.add("is-hidden");
+    cropState = null;
+    cropPending = null;
+    cropDrag = null;
+  }
+
+  function renderCropBox() {
+    if (!cropState) return;
+    const boxEl = $("#crop-box");
+    if (!boxEl) return;
+    const [l, t, r, b] = cropState.box;
+    const s = cropState.scale;
+    boxEl.style.left = cropState.offsetX + l * s + "px";
+    boxEl.style.top = cropState.offsetY + t * s + "px";
+    boxEl.style.width = (r - l) * s + "px";
+    boxEl.style.height = (b - t) * s + "px";
+  }
+
+  function updateCropInfo() {
+    const info = $("#crop-info");
+    if (!info || !cropState) return;
+    const [l, t, r, b] = cropState.box;
+    const cw = r - l;
+    const ch = b - t;
+    if (cropState.targetW > 0 && cropState.targetH > 0) {
+      info.textContent = `裁切区 ${cw}×${ch}  →  输出为游戏原尺寸 ${cropState.targetW}×${cropState.targetH}`;
+    } else {
+      info.textContent = `原图 ${cropState.natW}×${cropState.natH}  →  裁切 ${cw}×${ch}`;
+    }
+  }
+
+  function smartCropBox() {
+    if (!cropState) return;
+    const { natW, natH, targetW, targetH } = cropState;
+    let box;
+    if (targetW > 0 && targetH > 0) {
+      const srcRatio = natW / natH;
+      const tgtRatio = targetW / targetH;
+      let nw, nh;
+      if (srcRatio > tgtRatio) {
+        nh = natH;
+        nw = Math.max(1, Math.round(natH * tgtRatio));
+      } else {
+        nw = natW;
+        nh = Math.max(1, Math.round(natW / tgtRatio));
+      }
+      const l = Math.max(0, Math.floor((natW - nw) / 2));
+      const t = Math.max(0, Math.floor((natH - nh) / 2));
+      box = [l, t, Math.min(natW, l + nw), Math.min(natH, t + nh)];
+    } else {
+      const side = Math.min(natW, natH);
+      const l = Math.floor((natW - side) / 2);
+      const t = Math.floor((natH - side) / 2);
+      box = [l, t, l + side, t + side];
+    }
+    cropState.box = box;
+    renderCropBox();
+    updateCropInfo();
+  }
+
+  function resetCropFull() {
+    if (!cropState) return;
+    cropState.box = [0, 0, cropState.natW, cropState.natH];
+    renderCropBox();
+    updateCropInfo();
+  }
+
+  function startCropDrag(mode, e) {
+    if (!cropState) return;
+    e.preventDefault();
+    cropDrag = { mode, startX: e.clientX, startY: e.clientY, startBox: cropState.box.slice() };
+    document.addEventListener("pointermove", onCropPointerMove);
+    document.addEventListener("pointerup", onCropPointerUp);
+  }
+
+  function onCropPointerMove(e) {
+    if (!cropDrag || !cropState) return;
+    const scale = cropState.scale || 1;
+    const dxN = (e.clientX - cropDrag.startX) / scale;
+    const dyN = (e.clientY - cropDrag.startY) / scale;
+    const natW = cropState.natW;
+    const natH = cropState.natH;
+    const MIN = 8;
+    let [l, t, r, b] = cropDrag.startBox;
+    if (cropDrag.mode === "move") {
+      const w = r - l;
+      const h = b - t;
+      l += dxN;
+      r = l + w;
+      t += dyN;
+      b = t + h;
+      if (l < 0) { r -= l; l = 0; }
+      if (t < 0) { b -= t; t = 0; }
+      if (r > natW) { l -= r - natW; r = natW; }
+      if (b > natH) { t -= b - natH; b = natH; }
+    } else {
+      if (cropDrag.mode.includes("w")) l = Math.min(r - MIN, Math.max(0, l + dxN));
+      if (cropDrag.mode.includes("e")) r = Math.max(l + MIN, Math.min(natW, r + dxN));
+      if (cropDrag.mode.includes("n")) t = Math.min(b - MIN, Math.max(0, t + dyN));
+      if (cropDrag.mode.includes("s")) b = Math.max(t + MIN, Math.min(natH, b + dyN));
+    }
+    cropState.box = [Math.round(l), Math.round(t), Math.round(r), Math.round(b)];
+    renderCropBox();
+    updateCropInfo();
+  }
+
+  function onCropPointerUp() {
+    cropDrag = null;
+    document.removeEventListener("pointermove", onCropPointerMove);
+    document.removeEventListener("pointerup", onCropPointerUp);
+  }
+
+  async function cropReplacement() {
+    if (!state.replacement) {
+      toast("请先选择替换文件", true);
+      return;
+    }
+    if (/\.(animbin|bin)$/i.test(state.replacement.name || "")) {
+      toast("动画字节文件不能裁剪", true);
+      return;
+    }
+    if (!state.replacement.preview_data) {
+      toast("这个文件没有图片预览，无法裁剪", true);
+      return;
+    }
+    const sel = state.selection;
+    openCropModal({
+      url: state.replacement.preview_data,
+      targetW: sel?.width || 0,
+      targetH: sel?.height || 0,
+      onConfirm: async (box) => {
+        const data = await call("crop_replacement", { busy: true, busyText: "裁剪中…" }, box);
+        state.replacement = { ...state.replacement, ...data };
+        setMedia($("#studio-replacement"), data.preview_data, data.name);
+        toast(`已裁剪为 ${box[2] - box[0]}×${box[3] - box[1]}`);
+      },
+    });
+  }
+
+  async function cropReplaceDraft() {
+    if (state.draftIndex < 0) return;
+    try {
+      const data = await call("pick_draft_crop_source", { busy: false }, state.draftIndex);
+      if (!data) return;
+      openCropModal({
+        url: data.preview_data,
+        targetW: data.target_width,
+        targetH: data.target_height,
+        onConfirm: async (box) => {
+          const res = await call("commit_draft_crop", { busy: true, busyText: "裁剪写入…" }, box);
+          state.draft = res.draft;
+          toast("已裁剪并更新作品集项");
+          await showDraftDetail(state.draftIndex);
+        },
+      });
     } catch (_) {}
   }
 
@@ -804,6 +1029,8 @@
       const data = await call("commit_replacement", { busy: true, busyText: "写入作品集…" }, text);
       state.draft = data.draft;
       state.replacement = null;
+      const cropBtn = $("#crop-replacement");
+      if (cropBtn) cropBtn.disabled = true;
       toast("已加入作品集");
       renderDraftList();
     } catch (_) {}

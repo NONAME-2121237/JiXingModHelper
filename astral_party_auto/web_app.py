@@ -106,6 +106,8 @@ class DesktopApi:
         self._image_cache: dict[tuple, str] = {}
         self._pending_mod_path: Path | None = None
         self._replacement_path: Path | None = None
+        self._draft_crop_path: Path | None = None
+        self._draft_crop_index: int | None = None
         # Mod 管理预览：{bundle文件名: Path}
         self._mod_preview_files: dict[str, Path] = {}
         self._mod_preview_title: str = ""
@@ -528,6 +530,23 @@ class DesktopApi:
         return {"path": str(path), "name": path.name, "size": path.stat().st_size, "preview_data": preview_data}
 
     @exposed
+    def crop_replacement(self, crop_box: list) -> dict:
+        """裁剪已选的替换图（浏览器端框选后调用）；裁剪结果覆盖为待提交文件。"""
+        if self._replacement_path is None:
+            raise RuntimeError("请先选择替换文件。")
+        if self._replacement_path.suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp", ".bmp"}:
+            raise RuntimeError("当前文件不是图片，不能裁剪。")
+        from PIL import Image
+
+        box = tuple(int(v) for v in crop_box)
+        cropped = Image.open(self._replacement_path).convert("RGBA").crop(box)
+        out = DATA_DIR / "crop_preview.png"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        cropped.save(out)
+        self._replacement_path = out
+        return {"path": str(out), "name": out.name, "size": out.stat().st_size, "preview_data": self._image_data(out)}
+
+    @exposed
     def commit_replacement(self, text_content: str = "") -> dict:
         selection = self.controller.selection
         if not selection:
@@ -588,6 +607,49 @@ class DesktopApi:
         if path is None:
             return None
         item = self.controller.update_draft_texture(int(index), path)
+        return {"item": item, "draft": self._draft_state()}
+
+    @exposed
+    def pick_draft_crop_source(self, index: int) -> dict | None:
+        """裁剪换图第一步：选图并返回预览 + 游戏原尺寸，供浏览器端框选。"""
+        index = int(index)
+        if not (0 <= index < len(self.controller.draft_items)):
+            raise RuntimeError("作品集项不存在。")
+        path = self._pick_path(
+            "open",
+            file_types=("图片 (*.png;*.jpg;*.jpeg;*.webp;*.bmp)", "所有文件 (*.*)"),
+        )
+        if path is None:
+            return None
+        self._draft_crop_path = path
+        self._draft_crop_index = index
+        item = self.controller.draft_items[index]
+        target_w = target_h = 0
+        orig_bundle = self.controller.original_bundle_path(item.get("bundle", ""))
+        if orig_bundle:
+            try:
+                _png, info = self.controller.preview_bundle(orig_bundle, item.get("name"), tag="orig")
+                if info:
+                    target_w, target_h = info.width, info.height
+            except Exception:
+                pass
+        return {
+            "path": str(path),
+            "name": path.name,
+            "preview_data": self._image_data(path),
+            "target_width": target_w,
+            "target_height": target_h,
+        }
+
+    @exposed
+    def commit_draft_crop(self, crop_box: list | None = None) -> dict:
+        """裁剪换图第二步：用框选区域写入作品集项。"""
+        if self._draft_crop_path is None or self._draft_crop_index is None:
+            raise RuntimeError("请先选择要裁剪的图片。")
+        box = tuple(int(v) for v in crop_box) if crop_box else None
+        item = self.controller.update_draft_texture(self._draft_crop_index, self._draft_crop_path, crop_box=box)
+        self._draft_crop_path = None
+        self._draft_crop_index = None
         return {"item": item, "draft": self._draft_state()}
 
     @exposed
