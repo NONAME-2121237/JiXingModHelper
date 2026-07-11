@@ -629,12 +629,20 @@ class DesktopApi:
     @exposed
     def remove_draft_item(self, index: int) -> dict:
         self.controller.remove_draft_item(int(index))
-        return self._draft_state()
+        return {
+            "draft": self._draft_state(),
+            "installed": self.controller.installed_mods(),
+            "dashboard": self._dashboard_state(),
+        }
 
     @exposed
     def clear_draft(self) -> dict:
         self.controller.clear_draft()
-        return self._draft_state()
+        return {
+            "draft": self._draft_state(),
+            "installed": self.controller.installed_mods(),
+            "dashboard": self._dashboard_state(),
+        }
 
     @exposed
     def export_draft(self) -> dict:

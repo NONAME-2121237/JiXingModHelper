@@ -81,6 +81,7 @@ def main() -> None:
     try:
         root.mainloop()
     finally:
+        api.controller.close()
         try:
             server.shutdown()
             server.server_close()

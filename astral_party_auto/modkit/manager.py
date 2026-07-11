@@ -47,15 +47,66 @@ class ModManager:
             unmatched=sorted(unmatched),
         )
 
+    @staticmethod
+    def _safe_mod_name(name: str) -> str:
+        invalid = '<>:"/' + chr(92) + '|?*'
+        cleaned = str(name or "").translate(str.maketrans({char: "_" for char in invalid})).strip(" .")
+        return cleaned[:80] or "未命名 Mod"
+
     def _store_dir(self, mod_name: str) -> Path:
-        return self.data_dir / "mod_store" / mod_name
+        return self.data_dir / "mod_store" / self._safe_mod_name(mod_name)
+
+    @staticmethod
+    def _mod_file_source(mod: dict, file_name: str) -> Path | None:
+        store_value = mod.get("store")
+        if store_value:
+            candidate = Path(store_value) / file_name
+            if candidate.exists():
+                return candidate
+        source_value = mod.get("source")
+        if source_value:
+            source = Path(source_value)
+            if source.is_dir():
+                candidate = source / file_name
+                if candidate.exists():
+                    return candidate
+                found = next(source.rglob(file_name), None)
+                if found:
+                    return found
+        return None
+
+    def _apply_effective_files(self, state: dict, file_names) -> int:
+        """按安装/启用顺序重算文件；后激活的 Mod 覆盖先激活的。"""
+        mods = list(state.get("mods", {}).values())
+        changed = 0
+        for file_name in sorted(set(file_names)):
+            source = None
+            for mod in reversed(mods):
+                if mod.get("disabled") or file_name not in mod.get("files", []):
+                    continue
+                source = self._mod_file_source(mod, file_name)
+                if source:
+                    break
+            target = self.aa_dir / file_name
+            if source:
+                shutil.copy2(source, target)
+                changed += 1
+                continue
+            backup = self.backup_dir / file_name
+            if backup.exists():
+                shutil.copy2(backup, target)
+                changed += 1
+        return changed
 
     # ---- 安装 ----
     def install_mod(self, mod_dir: str | Path, name: str | None = None) -> ModAnalysis:
         analysis = self.analyze_mod(mod_dir)
-        mod_name = name or analysis.name
+        mod_name = self._safe_mod_name(name or analysis.name)
         if not analysis.matched:
             raise RuntimeError("这个 mod 里没有一个资源包和当前游戏版本对得上，无法安装。")
+        state = self._load_state()
+        old_info = state.get("mods", {}).get(mod_name) or {}
+        old_files = set(old_info.get("files", []))
 
         self.backup_dir.mkdir(parents=True, exist_ok=True)
         store = self._store_dir(mod_name)
@@ -74,7 +125,8 @@ class ModManager:
             shutil.copy2(analysis.files_map[fname], store / fname)
             applied.append(fname)
 
-        state = self._load_state()
+        # 重新安装同名 Mod 也算最后激活，确保覆盖顺序与用户操作一致。
+        state["mods"].pop(mod_name, None)
         state["mods"][mod_name] = {
             "installed_at": datetime.now().isoformat(timespec="seconds"),
             "files": applied,
@@ -82,6 +134,7 @@ class ModManager:
             "store": str(store),
             "disabled": False,
         }
+        self._apply_effective_files(state, old_files.difference(applied))
         self._save_state(state)
         return analysis
 
@@ -91,25 +144,13 @@ class ModManager:
         mod = state["mods"].get(name)
         if not mod:
             return 0
-        restored = self._restore_mod_files(mod)
+        affected = list(mod.get("files", []))
+        del state["mods"][name]
+        restored = self._apply_effective_files(state, affected)
         store = Path(mod.get("store") or self._store_dir(name))
         if store.exists():
             shutil.rmtree(store, ignore_errors=True)
-        del state["mods"][name]
         self._save_state(state)
-        return restored
-
-    def _restore_mod_files(self, mod: dict) -> int:
-        restored = 0
-        for fname in mod.get("files", []):
-            backup = self.backup_dir / fname
-            target = self.aa_dir / fname
-            if backup.exists() and target.exists():
-                shutil.copy2(backup, target)
-                restored += 1
-            elif backup.exists():
-                shutil.copy2(backup, target)
-                restored += 1
         return restored
 
     def disable_mod(self, name: str) -> int:
@@ -120,9 +161,9 @@ class ModManager:
             raise RuntimeError(f"未找到已装 mod：{name}")
         if mod.get("disabled"):
             return 0
-        restored = self._restore_mod_files(mod)
         mod["disabled"] = True
         state["mods"][name] = mod
+        restored = self._apply_effective_files(state, mod.get("files", []))
         self._save_state(state)
         return restored
 
@@ -134,35 +175,14 @@ class ModManager:
             raise RuntimeError(f"未找到已装 mod：{name}")
         if not mod.get("disabled"):
             return 0
-        store = Path(mod.get("store") or self._store_dir(name))
-        source = Path(mod.get("source") or "")
-        applied = 0
-        for fname in mod.get("files", []):
-            src = None
-            if (store / fname).exists():
-                src = store / fname
-            elif source.exists():
-                cand = source / fname
-                if cand.exists():
-                    src = cand
-                else:
-                    found = list(source.rglob(fname))
-                    if found:
-                        src = found[0]
-            if src is None:
-                continue
-            target = self.aa_dir / fname
-            # 启用前若还没备份，先备份当前（可能是原版）
-            backup = self.backup_dir / fname
-            if not backup.exists() and target.exists():
-                self.backup_dir.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(target, backup)
-            shutil.copy2(src, target)
-            applied += 1
-        if applied == 0:
+        files = list(mod.get("files", []))
+        if not any(self._mod_file_source(mod, file_name) for file_name in files):
             raise RuntimeError("无法启用：找不到该 mod 的缓存文件（安装来源可能已删除）。请重新安装。")
         mod["disabled"] = False
+        # 再启用等同于最后激活：它应覆盖当前启用 Mod 的同名资源。
+        state["mods"].pop(name, None)
         state["mods"][name] = mod
+        applied = self._apply_effective_files(state, files)
         self._save_state(state)
         return applied
 
@@ -175,6 +195,7 @@ class ModManager:
                 shutil.copy2(backup, target)
                 restored += 1
         self._save_state({"mods": {}})
+        shutil.rmtree(self.data_dir / "mod_store", ignore_errors=True)
         return restored
 
     def installed_mods(self) -> list[dict]:
@@ -207,4 +228,6 @@ class ModManager:
 
     def _save_state(self, state: dict) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        self.state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+        temporary = self.state_path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+        temporary.replace(self.state_path)

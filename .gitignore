@@ -45,7 +45,7 @@ _fix_shortcut.*
 
 # PyInstaller leftovers
 *.spec.bak
-.dist\
+.dist/
 native_host/bin/
 native_host/obj/
 native_host/publish/

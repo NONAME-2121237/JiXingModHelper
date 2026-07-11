@@ -59,6 +59,8 @@ class ModController:
         self.game_install = None
         self.aa_dir: Path | None = None
         self.manager: ModManager | None = None
+        self._pending_extract_dir: Path | None = None
+        self._pending_extract_source: Path | None = None
         # 多类型索引：texture/text/mesh/anim → {bundle: [names]}
         self.typed_index: dict[str, dict[str, list[str]]] = load_asset_index(INDEX_CACHE)
         self._category_cache_lock = threading.Lock()
@@ -176,7 +178,17 @@ class ModController:
     # ---------- 安装 / 还原 ----------
     def analyze(self, mod_path: str | Path):
         self._require_game()
-        return self.manager.analyze_mod(self._as_mod_dir(mod_path))
+        self._cleanup_pending_extract()
+        source = Path(mod_path).resolve()
+        mod_dir = self._as_mod_dir(source)
+        if source.is_file():
+            self._pending_extract_source = source
+            self._pending_extract_dir = mod_dir
+        try:
+            return self.manager.analyze_mod(mod_dir)
+        except Exception:
+            self._cleanup_pending_extract()
+            raise
 
     def install(self, mod_path: str | Path, name: str | None = None):
         self._require_game()
@@ -186,8 +198,25 @@ class ModController:
             name = src.stem if src.is_file() else src.name
             if name.startswith("apmod_"):
                 name = src.name
-        mod_dir = self._as_mod_dir(mod_path)
-        analysis = self.manager.install_mod(mod_dir, name)
+        source = src.resolve()
+        reuse_pending = (
+            self._pending_extract_source == source
+            and self._pending_extract_dir is not None
+            and self._pending_extract_dir.exists()
+        )
+        if reuse_pending:
+            mod_dir = self._pending_extract_dir
+        else:
+            self._cleanup_pending_extract()
+            mod_dir = self._as_mod_dir(source)
+        temporary = source.is_file()
+        try:
+            analysis = self.manager.install_mod(mod_dir, name)
+        finally:
+            if temporary:
+                shutil.rmtree(mod_dir, ignore_errors=True)
+            self._pending_extract_dir = None
+            self._pending_extract_source = None
         self.log(
             f"已安装「{name}」：替换 {len(analysis.matched)} 个资源包"
             f"（版本不符跳过 {len(analysis.unmatched)} 个），原文件已备份，可随时还原。"
@@ -197,13 +226,13 @@ class ModController:
     def uninstall(self, name: str) -> int:
         self._require_game()
         n = self.manager.uninstall_mod(name)
-        self.log(f"已卸载「{name}」，还原 {n} 个原始资源包。")
+        self.log(f"已卸载「{name}」，重新计算 {n} 个资源包的有效覆盖。")
         return n
 
     def disable_mod(self, name: str) -> int:
         self._require_game()
         n = self.manager.disable_mod(name)
-        self.log(f"已禁用「{name}」，还原 {n} 个文件（记录保留，可再启用）。")
+        self.log(f"已禁用「{name}」，重新计算 {n} 个资源包的有效覆盖（记录保留，可再启用）。")
         return n
 
     def enable_mod(self, name: str) -> int:
@@ -809,14 +838,93 @@ class ModController:
         self.log(f"已加入作品集（动画数据）：{replaced}")
         return item
 
+    def _restore_removed_draft_item(self, item: dict, draft_bundle: Path, original_bundle: Path) -> None:
+        """只回退被移除的资源，保留同 bundle 内其它作品集修改。"""
+        kind = item.get("kind")
+        asset_name = item.get("name")
+        if not asset_name:
+            raise RuntimeError("作品集项缺少资源名，无法安全移除。")
+
+        if kind == "texture":
+            with tempfile.TemporaryDirectory(prefix="apdraft_") as temp_dir:
+                original_png = Path(temp_dir) / "original.png"
+                info = extract_texture_png(original_bundle, original_png, target_name=asset_name)
+                if info is None:
+                    raise RuntimeError(f"原始资源包中找不到贴图：{asset_name}")
+                replace_bundle_texture(
+                    draft_bundle,
+                    original_png,
+                    draft_bundle,
+                    target_name=asset_name,
+                    match_original_size=False,
+                )
+            return
+
+        if kind == "text":
+            original_text = read_text_asset(original_bundle, asset_name)
+            replace_bundle_text(draft_bundle, asset_name, original_text, draft_bundle)
+            return
+
+        if kind == "anim":
+            with tempfile.TemporaryDirectory(prefix="apdraft_") as temp_dir:
+                raw_path = export_by_type(
+                    "anim",
+                    original_bundle,
+                    asset_name,
+                    Path(temp_dir) / "original.animbin",
+                )
+                replace_bundle_animation_raw(
+                    draft_bundle,
+                    asset_name,
+                    raw_path.read_bytes(),
+                    draft_bundle,
+                )
+            return
+
+        raise RuntimeError(f"不支持安全移除的作品集类型：{kind}")
+
     def remove_draft_item(self, index: int) -> None:
-        if 0 <= index < len(self.draft_items):
-            item = self.draft_items.pop(index)
-            self._save_draft()
-            self.log(f"已从作品集移除：{item.get('name')}")
+        if not (0 <= index < len(self.draft_items)):
+            raise RuntimeError("作品集项不存在。")
+        item = self.draft_items[index]
+        bundle_name = item.get("bundle")
+        remaining = [entry for item_index, entry in enumerate(self.draft_items) if item_index != index]
+        same_bundle = [entry for entry in remaining if entry.get("bundle") == bundle_name]
+        draft_dir = self._draft_dir()
+        draft_bundle = draft_dir / str(bundle_name)
+
+        if same_bundle:
+            original_bundle = self.original_bundle_path(str(bundle_name))
+            if not draft_bundle.exists() or original_bundle is None:
+                raise RuntimeError(f"找不到作品集资源包：{bundle_name}")
+            self._restore_removed_draft_item(item, draft_bundle, original_bundle)
+        else:
+            draft_bundle.unlink(missing_ok=True)
+
+        self.draft_items = remaining
+        active_bundles = {str(entry.get("bundle")) for entry in remaining if entry.get("bundle")}
+        for bundle_path in draft_dir.glob("*.bundle"):
+            if bundle_path.name not in active_bundles:
+                bundle_path.unlink(missing_ok=True)
+        self._save_draft()
+        if remaining:
+            export_mod_pack(draft_dir, None, pack_name=self.draft_name, items=remaining)
+        else:
+            (draft_dir / "mod_info.json").unlink(missing_ok=True)
+
+        if self.manager and self.manager.is_installed(self.draft_name):
+            if remaining:
+                self.install_draft()
+            else:
+                self.manager.uninstall_mod(self.draft_name)
+        self.log(f"已从作品集移除：{item.get('name')}")
 
     def clear_draft(self) -> None:
         """清空作品集元数据 + _draft 目录 + draft 预览缓存，不留残留。"""
+        installed_draft = bool(self.manager and self.manager.is_installed(self.draft_name))
+        if installed_draft and self.manager:
+            self.manager.uninstall_mod(self.draft_name)
+            self.log("已同步卸载清空前安装的作品集。")
         pack = self._draft_dir()
         if pack.exists():
             for f in sorted(pack.rglob("*"), reverse=True):
@@ -915,24 +1023,48 @@ class ModController:
         except (OSError, json.JSONDecodeError):
             pass
 
+    def _cleanup_pending_extract(self) -> None:
+        pending = self._pending_extract_dir
+        self._pending_extract_dir = None
+        self._pending_extract_source = None
+        if pending is not None:
+            shutil.rmtree(pending, ignore_errors=True)
+
+    def close(self) -> None:
+        """释放分析压缩包时保留的临时目录。"""
+        self._cleanup_pending_extract()
+
     def _as_mod_dir(self, mod_path: str | Path) -> Path:
         path = Path(mod_path)
         if path.is_dir():
             return path
         if path.suffix.lower() == ".zip":
             temp = Path(tempfile.mkdtemp(prefix="apmod_"))
-            with zipfile.ZipFile(path) as zf:
-                zf.extractall(temp)
+            try:
+                with zipfile.ZipFile(path) as zf:
+                    zf.extractall(temp)
+            except Exception:
+                shutil.rmtree(temp, ignore_errors=True)
+                raise
             return temp
         if path.suffix.lower() == ".rar":
             temp = Path(tempfile.mkdtemp(prefix="apmod_"))
             seven = next((p for p in SEVENZIP_CANDIDATES if p.exists()), None)
             if not seven:
+                shutil.rmtree(temp, ignore_errors=True)
                 raise RuntimeError("需要 7-Zip 或 WinRAR 才能解压 .rar，请先手动解压成文件夹再选。")
-            subprocess.run(
-                [str(seven), "x", str(path), f"-o{temp}", "-y"],
-                check=True,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            )
+            if seven.name.lower() == "unrar.exe":
+                arguments = [str(seven), "x", "-y", str(path), str(temp) + chr(92)]
+            else:
+                arguments = [str(seven), "x", str(path), f"-o{temp}", "-y"]
+            try:
+                subprocess.run(
+                    arguments,
+                    check=True,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
+            except Exception:
+                shutil.rmtree(temp, ignore_errors=True)
+                raise
             return temp
         raise RuntimeError("请选择 mod 文件夹，或 .zip / .rar 压缩包。")

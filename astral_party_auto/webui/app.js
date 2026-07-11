@@ -1,4 +1,4 @@
-/* 吉星派对 Mod 助手 — HTML 前端，通过 pywebview.api 调 Python 后端 */
+/* 吉星派对 Mod 助手 — HTML 前端，通过本地 HTTP API 调用 Python 后端 */
 (() => {
   "use strict";
 
@@ -710,10 +710,15 @@
     $("#draft-remove")?.addEventListener("click", async () => {
       if (state.draftIndex < 0) return;
       try {
-        state.draft = await call("remove_draft_item", { busy: true }, state.draftIndex);
+        const data = await call("remove_draft_item", { busy: true, busyText: "移除并同步中…" }, state.draftIndex);
+        state.draft = data.draft;
+        state.installed = data.installed || state.installed;
+        state.dashboard = data.dashboard || state.dashboard;
+        renderInstalled();
+        renderDashboard();
         state.draftIndex = -1;
         await refreshPack();
-        toast("已移除");
+        toast("已从作品集移除");
       } catch (_) {}
     });
     $("#draft-export")?.addEventListener("click", async () => {
@@ -735,7 +740,12 @@
     $("#draft-clear")?.addEventListener("click", async () => {
       if (!confirm("清空整个作品集？")) return;
       try {
-        state.draft = await call("clear_draft", { busy: true });
+        const data = await call("clear_draft", { busy: true, busyText: "清空并同步中…" });
+        state.draft = data.draft;
+        state.installed = data.installed || state.installed;
+        state.dashboard = data.dashboard || state.dashboard;
+        renderInstalled();
+        renderDashboard();
         state.draftIndex = -1;
         await refreshPack();
         toast("作品集已清空");
