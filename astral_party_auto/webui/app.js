@@ -840,7 +840,7 @@
     cropPending = { onConfirm };
     cropState = null;
     modal.classList.remove("is-hidden");
-    img.onload = () => {
+    const applyGeometry = () => {
       const stage = $("#crop-stage");
       const stageRect = stage.getBoundingClientRect();
       const imgRect = img.getBoundingClientRect();
@@ -856,7 +856,13 @@
       };
       smartCropBox();
     };
-    img.src = url;
+    img.onload = applyGeometry;
+    if (img.src === url && img.complete && img.naturalWidth) {
+      // 同一张图重新打开：src 不变不会再触发 onload，等布局刷新后手动跑一次
+      requestAnimationFrame(applyGeometry);
+    } else {
+      img.src = url;
+    }
   }
 
   function closeCropModal() {
