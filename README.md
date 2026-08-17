@@ -115,7 +115,7 @@
 ...\Astral Party\...\StreamingAssets\aa\StandaloneWindows64\*.bundle
 ```
 
-工具会自动识别两种布局，并把新版缓存里的 `__data` 映射回原本的 `.bundle` 名称。换皮说白了就是：**用改过贴图的同名 bundle 覆盖游戏实际读取的资源文件**。本工具用 [UnityPy](https://github.com/K0lb3/UnityPy) 读写这些 bundle，覆盖前先把原件备份到 `modkit_data/backups/`，所以还原只是把备份拷回去而已。
+工具会按当前 Addressables catalog 自动合并两种布局，把新版缓存里的 `__data` 映射回原本的 `.bundle` 名称；同名资源优先使用 AppData 热更新版本，其余资源从 Steam 基础包读取。换皮说白了就是：**用改过贴图的同名 bundle 覆盖游戏实际读取的资源文件**。本工具用 [UnityPy](https://github.com/K0lb3/UnityPy) 读写这些 bundle，覆盖前先把原件备份到 `modkit_data/backups/`，所以还原只是把备份拷回去而已。
 
 ---
 

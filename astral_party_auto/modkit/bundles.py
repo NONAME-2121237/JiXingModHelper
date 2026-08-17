@@ -26,7 +26,9 @@ _TYPE_MAP = {
 }
 
 ASSET_TYPE_KEYS = ("texture", "text", "mesh", "anim")
-INDEX_VERSION = 4
+INDEX_VERSION = 5
+
+BundleDirectories = str | Path | Iterable[str | Path]
 
 
 @dataclass(frozen=True)
@@ -71,10 +73,20 @@ def _legacy_aa_dir_for_exe(exe_path: str | Path) -> Path:
     return data_dir.joinpath(*AA_SUBPATH)
 
 
-def _has_unity_cache_data(cache_root: Path) -> bool:
-    if not cache_root.is_dir():
-        return False
-    return next(cache_root.glob(f"*/*/{UNITY_CACHE_DATA_FILE}"), None) is not None
+def bundle_dirs_for_exe(
+    exe_path: str | Path,
+    *,
+    user_profile: str | Path | None = None,
+) -> tuple[Path, ...]:
+    """按优先级返回资源目录：热更新缓存优先，Steam 基础包兜底。"""
+    hot_update_dir = hot_update_dir_for_exe(exe_path, user_profile=user_profile)
+    legacy_dir = _legacy_aa_dir_for_exe(exe_path)
+    directories = []
+    if hot_update_dir.is_dir():
+        directories.append(hot_update_dir)
+    if legacy_dir.is_dir():
+        directories.append(legacy_dir)
+    return tuple(directories) or (legacy_dir,)
 
 
 def aa_dir_for_exe(
@@ -82,16 +94,8 @@ def aa_dir_for_exe(
     *,
     user_profile: str | Path | None = None,
 ) -> Path:
-    """定位当前客户端实际使用的资源目录，并兼容旧安装布局。"""
-    hot_update_dir = hot_update_dir_for_exe(exe_path, user_profile=user_profile)
-    legacy_dir = _legacy_aa_dir_for_exe(exe_path)
-    if _has_unity_cache_data(hot_update_dir):
-        return hot_update_dir
-    if legacy_dir.is_dir():
-        return legacy_dir
-    if hot_update_dir.is_dir():
-        return hot_update_dir
-    return legacy_dir
+    """返回最高优先级资源目录；多目录读取请使用 ``bundle_dirs_for_exe``。"""
+    return bundle_dirs_for_exe(exe_path, user_profile=user_profile)[0]
 
 
 def read_bundle_textures(bundle_path: str | Path) -> list[TextureInfo]:
@@ -197,16 +201,31 @@ def _active_catalog_bundle_names(cache_root: Path) -> set[str] | None:
     return names
 
 
-def iter_bundle_entries(aa_dir: str | Path) -> Iterable[BundleEntry]:
-    """枚举可用资源包，同时兼容普通目录和 Unity 嵌套缓存。"""
-    aa = Path(aa_dir)
-    if not aa.is_dir():
-        return []
+def _normalize_bundle_dirs(directories: BundleDirectories) -> tuple[Path, ...]:
+    if isinstance(directories, (str, Path)):
+        return (Path(directories),)
+    return tuple(Path(directory) for directory in directories)
 
-    paths_by_name = {path.name: path for path in aa.glob("*.bundle")}
-    cached_data_files = list(aa.glob(f"*/*/{UNITY_CACHE_DATA_FILE}"))
+
+def _active_names_for_dirs(directories: tuple[Path, ...]) -> set[str] | None:
+    for directory in directories:
+        active_names = _active_catalog_bundle_names(directory)
+        if active_names is not None:
+            return active_names
+    return None
+
+
+def _entries_from_dir(aa: Path, active_names: set[str] | None) -> dict[str, Path]:
+    if not aa.is_dir():
+        return {}
+
+    paths_by_name: dict[str, Path] = {}
+    for path in aa.glob("*.bundle"):
+        if active_names is None or path.name in active_names:
+            paths_by_name[path.name] = path
+
+    cached_data_files = aa.glob(f"*/*/{UNITY_CACHE_DATA_FILE}")
     if cached_data_files:
-        active_names = _active_catalog_bundle_names(aa)
         for data_file in cached_data_files:
             bundle_name = f"{data_file.parent.name}.bundle"
             if active_names is not None and bundle_name not in active_names:
@@ -220,38 +239,52 @@ def iter_bundle_entries(aa_dir: str | Path) -> Iterable[BundleEntry]:
                     paths_by_name[bundle_name] = data_file
             except OSError:
                 continue
+    return paths_by_name
+
+
+def iter_bundle_entries(aa_dirs: BundleDirectories) -> Iterable[BundleEntry]:
+    """合并资源目录；同名包使用靠前目录中的版本。"""
+    directories = _normalize_bundle_dirs(aa_dirs)
+    active_names = _active_names_for_dirs(directories)
+    paths_by_name: dict[str, Path] = {}
+    for directory in directories:
+        for bundle_name, path in _entries_from_dir(directory, active_names).items():
+            paths_by_name.setdefault(bundle_name, path)
 
     return [BundleEntry(name, paths_by_name[name]) for name in sorted(paths_by_name)]
 
 
-def bundle_file_map(aa_dir: str | Path) -> dict[str, Path]:
-    return {entry.name: entry.path for entry in iter_bundle_entries(aa_dir)}
+def bundle_file_map(aa_dirs: BundleDirectories) -> dict[str, Path]:
+    return {entry.name: entry.path for entry in iter_bundle_entries(aa_dirs)}
 
 
-def iter_bundle_files(aa_dir: str | Path) -> Iterable[Path]:
+def iter_bundle_files(aa_dirs: BundleDirectories) -> Iterable[Path]:
     """兼容旧调用：只返回磁盘实际路径。"""
-    return [entry.path for entry in iter_bundle_entries(aa_dir)]
+    return [entry.path for entry in iter_bundle_entries(aa_dirs)]
 
 
-def bundle_source_key(aa_dir: str | Path) -> str:
+def bundle_source_key(aa_dirs: BundleDirectories) -> str:
     """生成轻量资源版本标识，用于自动丢弃过期索引。"""
-    aa = Path(aa_dir)
-    catalog_path = _latest_catalog_path(aa)
-    if catalog_path is not None:
-        hash_path = catalog_path.with_suffix(".hash")
-        try:
-            catalog_hash = hash_path.read_text(encoding="ascii").strip()
-        except OSError:
+    parts = []
+    for aa in _normalize_bundle_dirs(aa_dirs):
+        catalog_path = _latest_catalog_path(aa)
+        if catalog_path is not None:
+            hash_path = catalog_path.with_suffix(".hash")
             try:
-                catalog_hash = str(catalog_path.stat().st_mtime_ns)
+                catalog_hash = hash_path.read_text(encoding="ascii").strip()
             except OSError:
-                catalog_hash = "missing"
-        return f"cache|{aa}|{catalog_path.name}|{catalog_hash}"
-    try:
-        directory_stamp = aa.stat().st_mtime_ns
-    except OSError:
-        directory_stamp = 0
-    return f"directory|{aa}|{directory_stamp}"
+                try:
+                    catalog_hash = str(catalog_path.stat().st_mtime_ns)
+                except OSError:
+                    catalog_hash = "missing"
+            parts.append(f"cache|{aa}|{catalog_path.name}|{catalog_hash}")
+            continue
+        try:
+            directory_stamp = aa.stat().st_mtime_ns
+        except OSError:
+            directory_stamp = 0
+        parts.append(f"directory|{aa}|{directory_stamp}")
+    return "||".join(parts)
 
 
 def _empty_typed_index() -> dict[str, dict[str, list[str]]]:
@@ -259,7 +292,7 @@ def _empty_typed_index() -> dict[str, dict[str, list[str]]]:
 
 
 def build_asset_index(
-    aa_dir: str | Path,
+    aa_dirs: BundleDirectories,
     cache_path: str | Path,
     progress: Callable[[int, int, str], bool] | None = None,
 ) -> dict[str, dict[str, list[str]]]:
@@ -268,8 +301,7 @@ def build_asset_index(
     返回 {texture|text|mesh|anim: {bundle文件名: [资源名...]}}
     progress(done, total, current) 返回 False 可中断。
     """
-    aa = Path(aa_dir)
-    bundles = list(iter_bundle_entries(aa))
+    bundles = list(iter_bundle_entries(aa_dirs))
     total = len(bundles)
     typed = _empty_typed_index()
     for done, bundle in enumerate(bundles, start=1):
@@ -282,7 +314,7 @@ def build_asset_index(
                 typed[kind][bundle.name] = names
         if progress is not None and not progress(done, total, bundle.name):
             break
-    _save_typed_index(cache_path, typed, source=bundle_source_key(aa))
+    _save_typed_index(cache_path, typed, source=bundle_source_key(aa_dirs))
     return typed
 
 
@@ -304,7 +336,7 @@ def _save_typed_index(
 
 def load_asset_index(
     cache_path: str | Path,
-    source_dir: str | Path | None = None,
+    source_dir: BundleDirectories | None = None,
 ) -> dict[str, dict[str, list[str]]]:
     """加载当前资源版本的索引；旧布局索引会自动失效。"""
     cache = Path(cache_path)

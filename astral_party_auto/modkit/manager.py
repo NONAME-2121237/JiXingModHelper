@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from .bundles import bundle_file_map
+from .bundles import BundleDirectories, bundle_file_map
 
 
 @dataclass
@@ -27,12 +27,16 @@ class ModAnalysis:
 
 
 class ModManager:
-    def __init__(self, aa_dir: str | Path, data_dir: str | Path):
-        self.aa_dir = Path(aa_dir)
+    def __init__(self, aa_dirs: BundleDirectories, data_dir: str | Path):
+        if isinstance(aa_dirs, (str, Path)):
+            self.aa_dirs = (Path(aa_dirs),)
+        else:
+            self.aa_dirs = tuple(Path(directory) for directory in aa_dirs)
+        self.aa_dir = self.aa_dirs[0]
         self.data_dir = Path(data_dir)
         self.backup_dir = self.data_dir / "backups"
         self.state_path = self.data_dir / "mods_state.json"
-        self._bundle_paths = bundle_file_map(self.aa_dir)
+        self._bundle_paths = bundle_file_map(self.aa_dirs)
 
     @property
     def bundle_count(self) -> int:

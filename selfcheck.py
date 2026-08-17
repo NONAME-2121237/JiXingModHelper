@@ -57,6 +57,7 @@ def check_categories() -> None:
 def check_hot_update_cache() -> None:
     from astral_party_auto.modkit.bundles import (
         aa_dir_for_exe,
+        bundle_dirs_for_exe,
         bundle_file_map,
         hot_update_dir_for_exe,
     )
@@ -76,13 +77,18 @@ def check_hot_update_cache() -> None:
             / "StandaloneWindows64"
         )
         legacy_dir.mkdir(parents=True)
-        (legacy_dir / "legacy.bundle").write_bytes(b"LEGACY")
         profile = root / "profile"
-        assert aa_dir_for_exe(executable, user_profile=profile) == legacy_dir
-
-        cache_dir = hot_update_dir_for_exe(executable, user_profile=profile)
         active_name = "a" * 32 + ".bundle"
         stale_name = "b" * 32 + ".bundle"
+        legacy_only_name = "c" * 32 + ".bundle"
+        obsolete_name = "d" * 32 + ".bundle"
+        (legacy_dir / active_name).write_bytes(b"LEGACY_ACTIVE")
+        (legacy_dir / legacy_only_name).write_bytes(b"LEGACY_ONLY")
+        (legacy_dir / obsolete_name).write_bytes(b"OBSOLETE")
+        assert aa_dir_for_exe(executable, user_profile=profile) == legacy_dir
+        assert bundle_dirs_for_exe(executable, user_profile=profile) == (legacy_dir,)
+
+        cache_dir = hot_update_dir_for_exe(executable, user_profile=profile)
         active_data = cache_dir / ("1" * 32) / Path(active_name).stem / "__data"
         stale_data = cache_dir / ("2" * 32) / Path(stale_name).stem / "__data"
         active_data.parent.mkdir(parents=True)
@@ -92,27 +98,43 @@ def check_hot_update_cache() -> None:
 
         catalog = cache_dir.parent / "catalog_3.2.0.json"
         catalog.write_text(
-            json.dumps({"m_InternalIds": [rf"{{App.WebServerConfig.Path}}\{active_name}"]}),
+            json.dumps({
+                "m_InternalIds": [
+                    rf"{{App.WebServerConfig.Path}}\{active_name}",
+                    rf"{{App.WebServerConfig.Path}}\{legacy_only_name}",
+                ]
+            }),
             encoding="utf-8",
         )
         catalog.with_suffix(".hash").write_text("test-catalog-hash", encoding="ascii")
 
         assert aa_dir_for_exe(executable, user_profile=profile) == cache_dir
-        bundle_paths = bundle_file_map(cache_dir)
-        assert bundle_paths == {active_name: active_data}
+        resource_dirs = bundle_dirs_for_exe(executable, user_profile=profile)
+        assert resource_dirs == (cache_dir, legacy_dir)
+        bundle_paths = bundle_file_map(resource_dirs)
+        assert bundle_paths == {
+            active_name: active_data,
+            legacy_only_name: legacy_dir / legacy_only_name,
+        }
 
         mod_dir = root / "mod"
         mod_dir.mkdir()
         (mod_dir / active_name).write_bytes(b"MODIFIED")
-        manager = ModManager(cache_dir, root / "data")
+        (mod_dir / legacy_only_name).write_bytes(b"MODIFIED_LEGACY")
+        manager = ModManager(resource_dirs, root / "data")
         manager.install_mod(mod_dir, "缓存布局测试")
         assert active_data.read_bytes() == b"MODIFIED"
+        assert (legacy_dir / active_name).read_bytes() == b"LEGACY_ACTIVE"
+        assert (legacy_dir / legacy_only_name).read_bytes() == b"MODIFIED_LEGACY"
         manager.disable_mod("缓存布局测试")
         assert active_data.read_bytes() == b"ORIGINAL"
+        assert (legacy_dir / legacy_only_name).read_bytes() == b"LEGACY_ONLY"
         manager.enable_mod("缓存布局测试")
         assert active_data.read_bytes() == b"MODIFIED"
+        assert (legacy_dir / legacy_only_name).read_bytes() == b"MODIFIED_LEGACY"
         manager.restore_all()
         assert active_data.read_bytes() == b"ORIGINAL"
+        assert (legacy_dir / legacy_only_name).read_bytes() == b"LEGACY_ONLY"
 
 
 def check_mod_layering() -> None:
@@ -208,6 +230,7 @@ def check_archive_cleanup() -> None:
 
         controller = object.__new__(ModController)
         controller.aa_dir = game
+        controller.aa_dirs = (game,)
         controller.manager = FakeManager()
         controller.log = lambda _message: None
         controller._pending_extract_dir = None

@@ -16,8 +16,8 @@ from .core.config import APP_ROOT
 from .core.detector import find_game_install, launch_direct, launch_with_steam
 from .modkit import (
     ModManager,
-    aa_dir_for_exe,
     all_categories,
+    bundle_dirs_for_exe,
     bundle_source_key,
     build_asset_index,
     default_export_name,
@@ -59,6 +59,7 @@ class ModController:
         self.log = log
         self.game_install = None
         self.aa_dir: Path | None = None
+        self.aa_dirs: tuple[Path, ...] = ()
         self.manager: ModManager | None = None
         self._pending_extract_dir: Path | None = None
         self._pending_extract_source: Path | None = None
@@ -137,38 +138,42 @@ class ModController:
 
     # ---------- 检测 ----------
     def refresh_detection(self) -> None:
+        def connect(executable: Path | None) -> bool:
+            if executable is None or not executable.exists():
+                return False
+            directories = tuple(
+                directory
+                for directory in bundle_dirs_for_exe(executable)
+                if directory.is_dir()
+            )
+            if not directories:
+                return False
+            self.aa_dirs = directories
+            self.aa_dir = directories[0]
+            self.manager = ModManager(directories, DATA_DIR)
+            return True
+
         self.game_install = find_game_install()
-        exe = None
+        executable = None
         if self.game_install:
-            exe = self.game_install.cn_exe or self.game_install.int_exe
-        if exe and Path(exe).exists():
-            self.aa_dir = aa_dir_for_exe(exe)
-            if self.aa_dir and self.aa_dir.exists():
-                self.manager = ModManager(self.aa_dir, DATA_DIR)
-            else:
-                # exe 在但 aa 路径不对时再试另一种 exe
-                other = None
-                if self.game_install:
-                    other = self.game_install.int_exe if exe == self.game_install.cn_exe else self.game_install.cn_exe
-                if other and Path(other).exists():
-                    alt = aa_dir_for_exe(other)
-                    if alt.exists():
-                        self.aa_dir = alt
-                        self.manager = ModManager(self.aa_dir, DATA_DIR)
-                    else:
-                        self.aa_dir = None
-                        self.manager = None
-                else:
-                    self.aa_dir = None
-                    self.manager = None
-        else:
+            executable = self.game_install.cn_exe or self.game_install.int_exe
+        connected = connect(executable)
+        if not connected and self.game_install:
+            other = (
+                self.game_install.int_exe
+                if executable == self.game_install.cn_exe
+                else self.game_install.cn_exe
+            )
+            connected = connect(other)
+        if not connected:
             self.aa_dir = None
+            self.aa_dirs = ()
             self.manager = None
 
-        source_key = bundle_source_key(self.aa_dir) if self.aa_dir else ""
+        source_key = bundle_source_key(self.aa_dirs) if self.aa_dirs else ""
         if source_key != self._index_source_key:
-            if self.aa_dir:
-                self.typed_index = load_asset_index(INDEX_CACHE, self.aa_dir)
+            if self.aa_dirs:
+                self.typed_index = load_asset_index(INDEX_CACHE, self.aa_dirs)
             else:
                 self.typed_index = {"texture": {}, "text": {}, "mesh": {}, "anim": {}}
             self._category_cache_source = None
@@ -178,7 +183,7 @@ class ModController:
 
     @property
     def has_game(self) -> bool:
-        return self.aa_dir is not None and self.aa_dir.exists()
+        return self.manager is not None and bool(self.aa_dirs)
 
     @property
     def bundle_count(self) -> int:
@@ -989,10 +994,10 @@ class ModController:
         def worker():
             try:
                 typed = build_asset_index(
-                    self.aa_dir, INDEX_CACHE, progress=lambda d, t, _n: (progress(d, t) or True)
+                    self.aa_dirs, INDEX_CACHE, progress=lambda d, t, _n: (progress(d, t) or True)
                 )
                 self.typed_index = typed
-                self._index_source_key = bundle_source_key(self.aa_dir)
+                self._index_source_key = bundle_source_key(self.aa_dirs)
                 self._prime_texture_category_cache()
                 # on_done 仍传「含资源的包数」（各类型并集）
                 packs = set()

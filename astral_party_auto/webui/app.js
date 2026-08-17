@@ -338,6 +338,11 @@
         state.query || ""
       );
       state.resources = rows || [];
+      if (!state.resources.length) {
+        state.selection = null;
+        renderPreview();
+        updateExportButtons();
+      }
       state.resourcePage = 0;
       renderResources();
     } catch (err) {

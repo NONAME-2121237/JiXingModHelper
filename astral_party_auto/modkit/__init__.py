@@ -5,6 +5,7 @@
 from .bundles import (
     AA_SUBPATH,
     aa_dir_for_exe,
+    bundle_dirs_for_exe,
     bundle_file_map,
     bundle_source_key,
     build_asset_index,
@@ -42,6 +43,7 @@ from .manager import ModAnalysis, ModManager
 __all__ = [
     "AA_SUBPATH",
     "aa_dir_for_exe",
+    "bundle_dirs_for_exe",
     "bundle_file_map",
     "bundle_source_key",
     "build_asset_index",
