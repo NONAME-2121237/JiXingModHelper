@@ -350,14 +350,13 @@ class DesktopApi:
         files: dict[str, Path] = {}
         if store.exists():
             files = {p.name: p for p in store.glob("*.bundle")}
-        aa = self.controller.aa_dir
-        if not files and aa and file_names:
+        if not files and self.controller.has_game and file_names:
             store.mkdir(parents=True, exist_ok=True)
             import shutil
 
             for fname in file_names:
-                src = aa / fname
-                if not src.exists():
+                src = self.controller.bundle_path(fname)
+                if src is None:
                     continue
                 dst = store / fname
                 try:
@@ -368,10 +367,10 @@ class DesktopApi:
             info["store"] = str(store)
             state["mods"][name] = info
             manager._save_state(state)
-        if not files and aa and file_names:
+        if not files and self.controller.has_game and file_names:
             for fname in file_names:
-                p = aa / fname
-                if p.exists():
+                p = self.controller.bundle_path(fname)
+                if p is not None:
                     files[fname] = p
         if not files:
             raise RuntimeError("没有可预览的文件。请重新安装该 mod。")

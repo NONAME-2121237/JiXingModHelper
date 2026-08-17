@@ -18,6 +18,7 @@ from .modkit import (
     ModManager,
     aa_dir_for_exe,
     all_categories,
+    bundle_source_key,
     build_asset_index,
     default_export_name,
     export_by_type,
@@ -62,7 +63,13 @@ class ModController:
         self._pending_extract_dir: Path | None = None
         self._pending_extract_source: Path | None = None
         # 多类型索引：texture/text/mesh/anim → {bundle: [names]}
-        self.typed_index: dict[str, dict[str, list[str]]] = load_asset_index(INDEX_CACHE)
+        self.typed_index: dict[str, dict[str, list[str]]] = {
+            "texture": {},
+            "text": {},
+            "mesh": {},
+            "anim": {},
+        }
+        self._index_source_key = ""
         self._category_cache_lock = threading.Lock()
         self._category_cache_source: dict[str, list[str]] | None = None
         self._category_rows: dict[str, list[tuple[str, str]]] = {}
@@ -158,22 +165,26 @@ class ModController:
             self.aa_dir = None
             self.manager = None
 
+        source_key = bundle_source_key(self.aa_dir) if self.aa_dir else ""
+        if source_key != self._index_source_key:
+            if self.aa_dir:
+                self.typed_index = load_asset_index(INDEX_CACHE, self.aa_dir)
+            else:
+                self.typed_index = {"texture": {}, "text": {}, "mesh": {}, "anim": {}}
+            self._category_cache_source = None
+            self._category_rows = {}
+            self._category_counts = {}
+            self._index_source_key = source_key
+
     @property
     def has_game(self) -> bool:
         return self.aa_dir is not None and self.aa_dir.exists()
 
     @property
     def bundle_count(self) -> int:
-        if not self.has_game:
+        if not self.has_game or self.manager is None:
             return 0
-        # 缓存：避免每次仪表盘都扫 5000+ 个文件
-        cached = getattr(self, "_bundle_count_cache", None)
-        key = str(self.aa_dir)
-        if cached and cached[0] == key:
-            return cached[1]
-        n = sum(1 for _ in self.aa_dir.glob("*.bundle"))
-        self._bundle_count_cache = (key, n)
-        return n
+        return self.manager.bundle_count
 
     # ---------- 安装 / 还原 ----------
     def analyze(self, mod_path: str | Path):
@@ -661,10 +672,9 @@ class ModController:
         self.install(pack, name=self.draft_name)
 
     def bundle_path(self, bundle_name: str) -> Path | None:
-        if not self.has_game:
+        if not self.has_game or self.manager is None:
             return None
-        candidate = self.aa_dir / bundle_name
-        return candidate if candidate.exists() else None
+        return self.manager.bundle_path(bundle_name)
 
     def list_texts(self, bundle_path: str | Path) -> list[tuple[str, str]]:
         try:
@@ -982,6 +992,7 @@ class ModController:
                     self.aa_dir, INDEX_CACHE, progress=lambda d, t, _n: (progress(d, t) or True)
                 )
                 self.typed_index = typed
+                self._index_source_key = bundle_source_key(self.aa_dir)
                 self._prime_texture_category_cache()
                 # on_done 仍传「含资源的包数」（各类型并集）
                 packs = set()

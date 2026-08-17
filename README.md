@@ -103,13 +103,19 @@
 
 ## 原理
 
-游戏的美术资源在这儿：
+新版游戏会把热更新后的美术资源缓存在这儿：
+
+```text
+%USERPROFILE%\AppData\LocalLow\feimo\AstralParty_CN\com.unity.addressables\AssetBundles\<缓存键>\<包哈希>\__data
+```
+
+旧版资源仍可能位于：
 
 ```text
 ...\Astral Party\...\StreamingAssets\aa\StandaloneWindows64\*.bundle
 ```
 
-换皮说白了就是：**用改过贴图的同名 bundle 覆盖原文件**。本工具用 [UnityPy](https://github.com/K0lb3/UnityPy) 读写这些 bundle，覆盖前先把原件备份到 `modkit_data/backups/`，所以还原只是把备份拷回去而已。
+工具会自动识别两种布局，并把新版缓存里的 `__data` 映射回原本的 `.bundle` 名称。换皮说白了就是：**用改过贴图的同名 bundle 覆盖游戏实际读取的资源文件**。本工具用 [UnityPy](https://github.com/K0lb3/UnityPy) 读写这些 bundle，覆盖前先把原件备份到 `modkit_data/backups/`，所以还原只是把备份拷回去而已。
 
 ---
 
@@ -136,6 +142,7 @@ powershell -ExecutionPolicy Bypass -File .\build_exe.ps1
 |------|------|
 | 检测不到游戏 | 确认 Steam 里装了游戏，点「刷新检测」 |
 | 浏览/搜索是空的 | 点一次「刷新索引」，第一次扫几千个包要等一会儿 |
+| 新版游戏可浏览的资源较少 | 先在游戏里打开相关角色/界面，让资源下载到本机缓存，再回工具刷新检测和索引 |
 | 装完进游戏没变化 | 确认「能装数量 > 0」；重启游戏；看是不是被别的 mod 覆盖了 |
 | 文本/动画装了没用 | 这俩还在实验阶段，不保证生效，先以换贴图为主 |
 | RAR 解压失败 | 装个 7-Zip，或先手动解压成文件夹再选 |

@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.1
+
+### 修复
+
+- 兼容新版 `%USERPROFILE%\AppData\LocalLow\feimo\AstralParty_CN\com.unity.addressables\AssetBundles` 热更新缓存
+- 正确识别 Unity 缓存中的 `<缓存键>/<包哈希>/__data`，并映射回 Mod 使用的 `.bundle` 文件名
+- 仅扫描最新 Addressables catalog 仍有效的缓存项，避免误用旧版本残留
+- 安装、备份、还原、预览和作品集制作统一支持新版缓存布局
+- 游戏资源版本变化后自动丢弃旧索引，避免显示已经失效的包
+
 ## 1.0.0
 
 ### 功能

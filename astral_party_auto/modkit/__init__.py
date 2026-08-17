@@ -5,8 +5,12 @@
 from .bundles import (
     AA_SUBPATH,
     aa_dir_for_exe,
+    bundle_file_map,
+    bundle_source_key,
     build_asset_index,
     extract_texture_png,
+    hot_update_dir_for_exe,
+    iter_bundle_entries,
     load_asset_index,
     read_bundle_textures,
 )
@@ -38,8 +42,12 @@ from .manager import ModAnalysis, ModManager
 __all__ = [
     "AA_SUBPATH",
     "aa_dir_for_exe",
+    "bundle_file_map",
+    "bundle_source_key",
     "build_asset_index",
     "extract_texture_png",
+    "hot_update_dir_for_exe",
+    "iter_bundle_entries",
     "load_asset_index",
     "read_bundle_textures",
     "ADVANCED_IDS",

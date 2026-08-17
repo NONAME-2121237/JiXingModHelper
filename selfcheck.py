@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import time
 import zipfile
@@ -51,6 +52,67 @@ def check_categories() -> None:
         "mesh",
         "anim",
     ]
+
+
+def check_hot_update_cache() -> None:
+    from astral_party_auto.modkit.bundles import (
+        aa_dir_for_exe,
+        bundle_file_map,
+        hot_update_dir_for_exe,
+    )
+    from astral_party_auto.modkit.manager import ModManager
+
+    with TemporaryDirectory(prefix="jixing_cache_") as root_value:
+        root = Path(root_value)
+        executable = root / "game" / "8vJXn6CN" / "AstralParty_CN.exe"
+        executable.parent.mkdir(parents=True)
+        executable.write_bytes(b"")
+
+        legacy_dir = (
+            executable.parent
+            / "AstralParty_CN_Data"
+            / "StreamingAssets"
+            / "aa"
+            / "StandaloneWindows64"
+        )
+        legacy_dir.mkdir(parents=True)
+        (legacy_dir / "legacy.bundle").write_bytes(b"LEGACY")
+        profile = root / "profile"
+        assert aa_dir_for_exe(executable, user_profile=profile) == legacy_dir
+
+        cache_dir = hot_update_dir_for_exe(executable, user_profile=profile)
+        active_name = "a" * 32 + ".bundle"
+        stale_name = "b" * 32 + ".bundle"
+        active_data = cache_dir / ("1" * 32) / Path(active_name).stem / "__data"
+        stale_data = cache_dir / ("2" * 32) / Path(stale_name).stem / "__data"
+        active_data.parent.mkdir(parents=True)
+        stale_data.parent.mkdir(parents=True)
+        active_data.write_bytes(b"ORIGINAL")
+        stale_data.write_bytes(b"STALE")
+
+        catalog = cache_dir.parent / "catalog_3.2.0.json"
+        catalog.write_text(
+            json.dumps({"m_InternalIds": [rf"{{App.WebServerConfig.Path}}\{active_name}"]}),
+            encoding="utf-8",
+        )
+        catalog.with_suffix(".hash").write_text("test-catalog-hash", encoding="ascii")
+
+        assert aa_dir_for_exe(executable, user_profile=profile) == cache_dir
+        bundle_paths = bundle_file_map(cache_dir)
+        assert bundle_paths == {active_name: active_data}
+
+        mod_dir = root / "mod"
+        mod_dir.mkdir()
+        (mod_dir / active_name).write_bytes(b"MODIFIED")
+        manager = ModManager(cache_dir, root / "data")
+        manager.install_mod(mod_dir, "缓存布局测试")
+        assert active_data.read_bytes() == b"MODIFIED"
+        manager.disable_mod("缓存布局测试")
+        assert active_data.read_bytes() == b"ORIGINAL"
+        manager.enable_mod("缓存布局测试")
+        assert active_data.read_bytes() == b"MODIFIED"
+        manager.restore_all()
+        assert active_data.read_bytes() == b"ORIGINAL"
 
 
 def check_mod_layering() -> None:
@@ -194,6 +256,7 @@ def main() -> int:
     print("=== safe selfcheck ===")
     check("static files", check_static_files)
     check("categories", check_categories)
+    check("hot-update cache layout", check_hot_update_cache)
     check("mod layering", check_mod_layering)
     check("draft removal", check_draft_removal)
     check("archive cleanup", check_archive_cleanup)

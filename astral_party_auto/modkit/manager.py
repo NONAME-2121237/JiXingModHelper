@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
+from .bundles import bundle_file_map
+
 
 @dataclass
 class ModAnalysis:
@@ -30,6 +32,14 @@ class ModManager:
         self.data_dir = Path(data_dir)
         self.backup_dir = self.data_dir / "backups"
         self.state_path = self.data_dir / "mods_state.json"
+        self._bundle_paths = bundle_file_map(self.aa_dir)
+
+    @property
+    def bundle_count(self) -> int:
+        return len(self._bundle_paths)
+
+    def bundle_path(self, file_name: str) -> Path | None:
+        return self._bundle_paths.get(Path(file_name).name)
 
     # ---- 分析 ----
     def analyze_mod(self, mod_dir: str | Path) -> ModAnalysis:
@@ -37,8 +47,8 @@ class ModManager:
         files_map: dict[str, Path] = {}
         for path in sorted(mod_dir.rglob("*.bundle")):
             files_map.setdefault(path.name, path)
-        matched = [name for name in files_map if (self.aa_dir / name).exists()]
-        unmatched = [name for name in files_map if not (self.aa_dir / name).exists()]
+        matched = [name for name in files_map if self.bundle_path(name) is not None]
+        unmatched = [name for name in files_map if self.bundle_path(name) is None]
         return ModAnalysis(
             name=mod_dir.name,
             mod_dir=mod_dir,
@@ -87,7 +97,9 @@ class ModManager:
                 source = self._mod_file_source(mod, file_name)
                 if source:
                     break
-            target = self.aa_dir / file_name
+            target = self.bundle_path(file_name)
+            if target is None:
+                continue
             if source:
                 shutil.copy2(source, target)
                 changed += 1
@@ -116,7 +128,9 @@ class ModManager:
 
         applied: list[str] = []
         for fname in analysis.matched:
-            target = self.aa_dir / fname
+            target = self.bundle_path(fname)
+            if target is None:
+                continue
             backup = self.backup_dir / fname
             if not backup.exists():  # 只在第一次替换时备份最原始的文件
                 shutil.copy2(target, backup)
@@ -190,8 +204,8 @@ class ModManager:
         """把所有备份过的原文件全部还原（终极还原按钮）。"""
         restored = 0
         for backup in self.backup_dir.glob("*.bundle"):
-            target = self.aa_dir / backup.name
-            if target.exists():
+            target = self.bundle_path(backup.name)
+            if target is not None:
                 shutil.copy2(backup, target)
                 restored += 1
         self._save_state({"mods": {}})
