@@ -137,7 +137,7 @@
     if (path) {
       path.textContent = d.has_game
         ? `自动找到的游戏：${d.game_exe || ""}`
-        : "未找到游戏，请确认 Steam 已安装吉星派对。";
+        : "未找到游戏，请确认已安装 Steam 或 TapTap 版吉星派对。";
     }
     setHeaderStatus(d.has_game ? "游戏已连接" : "未检测到游戏", !d.has_game);
   }

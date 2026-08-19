@@ -78,7 +78,7 @@ def bundle_dirs_for_exe(
     *,
     user_profile: str | Path | None = None,
 ) -> tuple[Path, ...]:
-    """按优先级返回资源目录：热更新缓存优先，Steam 基础包兜底。"""
+    """按优先级返回资源目录：热更新缓存优先，Steam/TapTap 基础包兜底。"""
     hot_update_dir = hot_update_dir_for_exe(exe_path, user_profile=user_profile)
     legacy_dir = _legacy_aa_dir_for_exe(exe_path)
     directories = []

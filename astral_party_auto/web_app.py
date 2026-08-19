@@ -175,7 +175,7 @@ class DesktopApi:
             backup_count = sum(1 for _ in controller.manager.backup_dir.glob("*.bundle"))
         game_name = "未检测到"
         if controller.game_install:
-            game_name = controller.game_install.install_dir.name
+            game_name = controller.game_install.name
         return {
             "has_game": controller.has_game,
             "game_name": game_name,
@@ -221,7 +221,7 @@ class DesktopApi:
         if dash.get("has_game"):
             self._append_log(f"已连接游戏：{dash.get('game_exe') or dash.get('game_name')}")
         else:
-            self._append_log("未检测到游戏。可点「刷新检测」，或确认 Steam 已安装吉星派对。")
+            self._append_log("未检测到游戏。可点「刷新检测」，或确认已安装 Steam 或 TapTap 版吉星派对。")
         return {
             "dashboard": dash,
             "installed": self.controller.installed_mods(),

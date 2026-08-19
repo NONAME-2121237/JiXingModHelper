@@ -277,7 +277,7 @@ class ModController:
 
     # ---------- 启动游戏 ----------
     def launch_game(self, region: str = "CN") -> None:
-        """启动吉星派对：优先直启本地 exe，失败再走 Steam。"""
+        """启动吉星派对：优先直启本地 exe，失败再尝试 Steam。"""
         self.refresh_detection()
         if self.game_install:
             exe = self.game_install.executable_for_region(region)
@@ -296,8 +296,8 @@ class ModController:
             self.log("未找到本地 exe，已尝试通过 Steam 启动（AppID 2622000）。")
         except Exception as exc:
             raise RuntimeError(
-                "找不到游戏。请确认 Steam 已安装《吉星派对》，"
-                r"常见路径：D:\Steam\steamapps\common\Astral Party\8vJXn6CN\AstralParty_CN.exe"
+                "找不到游戏。请确认已安装 Steam 或 TapTap 版《吉星派对》，"
+                r"常见路径：D:\Steam\steamapps\common\Astral Party\8vJXn6CN\AstralParty_CN.exe 或 C:\TapTap\PC Games\..."
                 f"\n详情：{exc}"
             ) from exc
 
@@ -1016,7 +1016,7 @@ class ModController:
     # ---------- 内部 ----------
     def _require_game(self) -> None:
         if not self.has_game:
-            raise RuntimeError("没有检测到游戏资源目录，请确认吉星派对已通过 Steam 安装。")
+            raise RuntimeError("没有检测到游戏资源目录，请确认吉星派对已通过 Steam 或 TapTap 安装。")
 
     def _draft_dir(self) -> Path:
         d = MADE_DIR / "_draft"
