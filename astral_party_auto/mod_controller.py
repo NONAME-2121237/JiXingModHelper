@@ -31,7 +31,7 @@ from .modkit import (
     replace_bundle_animation_raw,
     replace_bundle_text,
     replace_bundle_texture,
-    replace_bundle_texture_from_sibling,
+    replace_bundle_texture_from_bundle,
 )
 from .modkit.bundles import iter_bundle_entries, read_bundle_asset_names
 from .modkit.categories import (
@@ -680,7 +680,10 @@ class ModController:
 
 
     def quick_create_sfw_texture_mod(self) -> dict:
-        """一键把 *_sfw 贴图替换为同包无 _sfw 版本，生成标准 mod 并自动安装。"""
+        """一键把 *_sfw 贴图替换为无 _sfw 版本，生成标准 mod 并自动安装。
+
+        `_sfw` 与无后缀贴图可能不在同一个 bundle 里，因此会跨资源包查找源贴图。
+        """
         self._require_game()
         texture_index = self.typed_index.get("texture") or {}
         if not texture_index:
@@ -694,15 +697,26 @@ class ModController:
                 texture_names = names_by_type.get("texture") or []
                 if texture_names:
                     texture_index[entry.name] = texture_names
-        pairs_by_bundle: dict[str, list[tuple[str, str]]] = {}
+
+        # 建立“无 _sfw 贴图名 -> 所在包”的全局索引，支持跨包查找源图。
+        base_sources: dict[str, str] = {}
         for bundle_name, names in texture_index.items():
-            name_set = set(names)
+            for name in names:
+                if not name.lower().endswith("_sfw") and name not in base_sources:
+                    base_sources[name] = bundle_name
+
+        # 对每个 *_sfw 贴图，找同名无后缀贴图所在的包。
+        pairs_by_bundle: dict[str, list[tuple[str, str, str]]] = {}
+        for bundle_name, names in texture_index.items():
             for name in names:
                 if not name.lower().endswith("_sfw"):
                     continue
                 base = name[: -len("_sfw")]
-                if base in name_set:
-                    pairs_by_bundle.setdefault(bundle_name, []).append((name, base))
+                source_bundle_name = base_sources.get(base)
+                if source_bundle_name:
+                    pairs_by_bundle.setdefault(bundle_name, []).append(
+                        (name, base, source_bundle_name)
+                    )
 
         if not pairs_by_bundle:
             raise RuntimeError("没有找到可替换的 _sfw 贴图资源。请先刷新索引，或确认当前游戏版本包含这类贴图。")
@@ -718,10 +732,17 @@ class ModController:
                 backup = DATA_DIR / "backups" / bundle_name
                 base_bundle = backup if backup.exists() else game_b
                 out_bundle = pack_dir / bundle_name
-                for target_name, source_name in pairs:
+                for target_name, source_name, source_bundle_name in pairs:
+                    source_path = self.bundle_path(source_bundle_name)
+                    source_backup = DATA_DIR / "backups" / source_bundle_name
+                    if source_backup.exists():
+                        source_path = source_backup
+                    if source_path is None:
+                        continue
                     src = out_bundle if out_bundle.exists() else base_bundle
-                    replace_bundle_texture_from_sibling(
+                    replace_bundle_texture_from_bundle(
                         src,
+                        source_path,
                         target_name,
                         source_name,
                         out_bundle,
@@ -731,7 +752,8 @@ class ModController:
                         "bundle": bundle_name,
                         "name": target_name,
                         "replace_with": source_name,
-                        "note": f"{source_name} → {target_name}",
+                        "source_bundle": source_bundle_name,
+                        "note": f"{source_name}（{source_bundle_name}） → {target_name}",
                         "at": datetime.now().isoformat(timespec="seconds"),
                     })
 

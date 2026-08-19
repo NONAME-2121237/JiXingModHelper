@@ -37,7 +37,7 @@ from .maker import (
     replace_bundle_animation_raw,
     replace_bundle_text,
     replace_bundle_texture,
-    replace_bundle_texture_from_sibling,
+    replace_bundle_texture_from_bundle,
 )
 from .manager import ModAnalysis, ModManager
 
@@ -73,7 +73,7 @@ __all__ = [
     "replace_bundle_animation_raw",
     "replace_bundle_text",
     "replace_bundle_texture",
-    "replace_bundle_texture_from_sibling",
+    "replace_bundle_texture_from_bundle",
     "ModAnalysis",
     "ModManager",
 ]

@@ -58,23 +58,21 @@ def replace_bundle_texture(
     return replaced
 
 
-def replace_bundle_texture_from_sibling(
+def replace_bundle_texture_from_bundle(
     src_bundle: str | Path,
+    source_bundle: str | Path,
     target_name: str,
     source_name: str,
     out_bundle: str | Path,
 ) -> str:
-    """把同包内 source_name 的贴图像素复制给 target_name。
+    """把 source_bundle 中 source_name 的贴图像素复制到 src_bundle 的 target_name。
 
-    用于“_sfw -> 去掉 _sfw”的快捷贴图替换：保留 target 的对象名，
-    但图像内容使用同包中无 _sfw 后缀的版本。
+    用于“_sfw -> 去掉 _sfw”的快捷贴图替换：`_sfw` 与无后缀贴图可能不在同一个
+    资源包里，因此允许从另一个 bundle 取源图。保留 target 的对象名。
     """
-    env = UnityPy.load(str(src_bundle))
+    source_env = UnityPy.load(str(source_bundle))
     source_image = None
-    target_obj = None
-    target_data = None
-
-    for obj in env.objects:
+    for obj in source_env.objects:
         if obj.type.name != "Texture2D":
             continue
         try:
@@ -84,14 +82,29 @@ def replace_bundle_texture_from_sibling(
         name = str(getattr(data, "m_Name", "") or "")
         if name == source_name:
             source_image = getattr(data, "image", None)
-        elif name == target_name:
-            target_obj = obj
-            target_data = data
+            break
 
     if source_image is None:
-        raise RuntimeError(f"找不到源贴图：{source_name}")
+        raise RuntimeError(f"找不到源贴图：{source_name}（来源包 {Path(source_bundle).name}）")
+
+    env = UnityPy.load(str(src_bundle))
+    target_obj = None
+    target_data = None
+    for obj in env.objects:
+        if obj.type.name != "Texture2D":
+            continue
+        try:
+            data = obj.read()
+        except Exception:
+            continue
+        name = str(getattr(data, "m_Name", "") or "")
+        if name == target_name:
+            target_obj = obj
+            target_data = data
+            break
+
     if target_obj is None or target_data is None:
-        raise RuntimeError(f"找不到目标贴图：{target_name}")
+        raise RuntimeError(f"找不到目标贴图：{target_name}（目标包 {Path(src_bundle).name}）")
 
     image = source_image
     width = int(getattr(target_data, "m_Width", 0) or 0)
