@@ -29,9 +29,9 @@ from .modkit import (
     load_asset_index,
     read_text_asset,
     replace_bundle_animation_raw,
-    replace_bundle_mesh_from_sibling,
     replace_bundle_text,
     replace_bundle_texture,
+    replace_bundle_texture_from_sibling,
 )
 from .modkit.bundles import iter_bundle_entries, read_bundle_asset_names
 from .modkit.categories import (
@@ -679,23 +679,23 @@ class ModController:
         self.install(pack, name=self.draft_name)
 
 
-    def quick_create_sfw_model_mod(self) -> dict:
-        """一键把 *_sfw 模型替换为同包无 _sfw 版本，生成标准 mod 并自动安装。"""
+    def quick_create_sfw_texture_mod(self) -> dict:
+        """一键把 *_sfw 贴图替换为同包无 _sfw 版本，生成标准 mod 并自动安装。"""
         self._require_game()
-        mesh_index = self.typed_index.get("mesh") or {}
-        if not mesh_index:
+        texture_index = self.typed_index.get("texture") or {}
+        if not texture_index:
             # 索引未建立时直接扫包，保证一键按钮不依赖“刷新索引”。
-            mesh_index = {}
+            texture_index = {}
             for entry in iter_bundle_entries(self.aa_dirs):
                 try:
                     names_by_type = read_bundle_asset_names(entry.path)
                 except Exception:
                     continue
-                mesh_names = names_by_type.get("mesh") or []
-                if mesh_names:
-                    mesh_index[entry.name] = mesh_names
+                texture_names = names_by_type.get("texture") or []
+                if texture_names:
+                    texture_index[entry.name] = texture_names
         pairs_by_bundle: dict[str, list[tuple[str, str]]] = {}
-        for bundle_name, names in mesh_index.items():
+        for bundle_name, names in texture_index.items():
             name_set = set(names)
             for name in names:
                 if not name.lower().endswith("_sfw"):
@@ -705,9 +705,9 @@ class ModController:
                     pairs_by_bundle.setdefault(bundle_name, []).append((name, base))
 
         if not pairs_by_bundle:
-            raise RuntimeError("没有找到可替换的 _sfw 模型资源。请先刷新索引，或确认当前游戏版本包含这类模型。")
+            raise RuntimeError("没有找到可替换的 _sfw 贴图资源。请先刷新索引，或确认当前游戏版本包含这类贴图。")
 
-        mod_name = "SFW模型替换"
+        mod_name = "SFW贴图替换"
         items: list[dict] = []
         with tempfile.TemporaryDirectory(prefix="ap_sfw_") as tmp:
             pack_dir = Path(tmp)
@@ -720,14 +720,14 @@ class ModController:
                 out_bundle = pack_dir / bundle_name
                 for target_name, source_name in pairs:
                     src = out_bundle if out_bundle.exists() else base_bundle
-                    replace_bundle_mesh_from_sibling(
+                    replace_bundle_texture_from_sibling(
                         src,
                         target_name,
                         source_name,
                         out_bundle,
                     )
                     items.append({
-                        "kind": "mesh",
+                        "kind": "texture",
                         "bundle": bundle_name,
                         "name": target_name,
                         "replace_with": source_name,
@@ -736,13 +736,13 @@ class ModController:
                     })
 
             if not items:
-                raise RuntimeError("没有找到可替换的 _sfw 模型资源。")
+                raise RuntimeError("没有找到可替换的 _sfw 贴图资源。")
             export_mod_pack(pack_dir, None, pack_name=mod_name, items=items)
             self.install(pack_dir, name=mod_name)
 
         self.log(
-            f"快捷模型 Mod 已创建并安装：{mod_name}，"
-            f"涉及 {len(items)} 个模型 / {len(pairs_by_bundle)} 个资源包（已备份原文件）。"
+            f"快捷贴图 Mod 已创建并安装：{mod_name}，"
+            f"涉及 {len(items)} 张贴图 / {len(pairs_by_bundle)} 个资源包（已备份原文件）。"
         )
         return {
             "name": mod_name,

@@ -35,9 +35,9 @@ from .maker import (
     list_text_assets,
     read_text_asset,
     replace_bundle_animation_raw,
-    replace_bundle_mesh_from_sibling,
     replace_bundle_text,
     replace_bundle_texture,
+    replace_bundle_texture_from_sibling,
 )
 from .manager import ModAnalysis, ModManager
 
@@ -71,9 +71,9 @@ __all__ = [
     "list_text_assets",
     "read_text_asset",
     "replace_bundle_animation_raw",
-    "replace_bundle_mesh_from_sibling",
     "replace_bundle_text",
     "replace_bundle_texture",
+    "replace_bundle_texture_from_sibling",
     "ModAnalysis",
     "ModManager",
 ]

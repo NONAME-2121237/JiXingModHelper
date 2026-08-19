@@ -654,8 +654,8 @@ class DesktopApi:
         return {"installed": self.controller.installed_mods(), "dashboard": self._dashboard_state()}
 
     @exposed
-    def quick_create_sfw_model(self) -> dict:
-        result = self.controller.quick_create_sfw_model_mod()
+    def quick_create_sfw_texture(self) -> dict:
+        result = self.controller.quick_create_sfw_texture_mod()
         result["dashboard"] = self._dashboard_state()
         return result
 

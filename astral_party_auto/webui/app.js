@@ -782,14 +782,14 @@
         toast("已刷新检测");
       } else if (action === "open-assets") {
         await call("open_asset_dir");
-      } else if (action === "quick-sfw-model") {
-        if (!confirm("将扫描所有 *_sfw 模型，并用同包无 _sfw 版本替换后自动安装为 Mod（自动备份原文件）。继续？")) return;
-        const data = await call("quick_create_sfw_model", { busy: true, busyText: "正在创建并安装去SFW模型Mod…" });
+      } else if (action === "quick-sfw-texture") {
+        if (!confirm("将扫描所有 *_sfw 贴图，并用同包无 _sfw 版本替换后自动安装为 Mod（自动备份原文件）。继续？")) return;
+        const data = await call("quick_create_sfw_texture", { busy: true, busyText: "正在创建并安装去SFW贴图Mod…" });
         state.installed = data.installed || state.installed;
         state.dashboard = data.dashboard || state.dashboard;
         renderInstalled();
         renderDashboard();
-        toast(`已创建并安装：${data.name}，替换 ${data.pairs} 个模型 / ${data.bundle_count} 个资源包`);
+        toast(`已创建并安装：${data.name}，替换 ${data.pairs} 张贴图 / ${data.bundle_count} 个资源包`);
       }
     } catch (_) {}
   }
