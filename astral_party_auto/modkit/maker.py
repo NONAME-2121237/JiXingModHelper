@@ -331,6 +331,61 @@ def replace_bundle_animation_raw(
 
 
 
+def replace_bundle_mesh_from_sibling(
+    src_bundle: str | Path,
+    target_name: str,
+    source_name: str,
+    out_bundle: str | Path,
+) -> str:
+    """把同包内 source_name 的 Mesh 原始数据复制给 target_name。
+
+    用于“_sfw -> 去掉 _sfw”的快捷模型替换：保留 target 的对象名，
+    但几何/网格数据使用同包中无 _sfw 后缀的版本。
+    """
+    env = UnityPy.load(str(src_bundle))
+    source_raw: bytes | None = None
+    target_obj = None
+    for obj in env.objects:
+        if obj.type.name != "Mesh":
+            continue
+        try:
+            data = obj.read()
+        except Exception:
+            continue
+        name = str(getattr(data, "m_Name", "") or "")
+        if name == source_name:
+            try:
+                source_raw = obj.get_raw_data() or None
+            except Exception:
+                source_raw = None
+        elif name == target_name:
+            target_obj = obj
+
+    if source_raw is None:
+        raise RuntimeError(f"找不到源模型：{source_name}")
+    if target_obj is None:
+        raise RuntimeError(f"找不到目标模型：{target_name}")
+
+    try:
+        target_obj.set_raw_data(source_raw)
+    except Exception as exc:
+        raise RuntimeError(f"写入模型数据失败：{exc}") from exc
+
+    # 尽量保留目标对象名，避免依赖名称的逻辑失效；失败也不影响已写入的数据。
+    try:
+        target_data = target_obj.read()
+        if hasattr(target_data, "m_Name"):
+            target_data.m_Name = target_name
+            target_data.save()
+    except Exception:
+        pass
+
+    out = Path(out_bundle)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_bytes(env.file.save())
+    return target_name
+
+
 def export_mod_pack(
     pack_dir: str | Path,
     zip_path: str | Path | None = None,

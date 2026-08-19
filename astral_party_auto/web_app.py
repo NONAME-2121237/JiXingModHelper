@@ -654,6 +654,12 @@ class DesktopApi:
         return {"installed": self.controller.installed_mods(), "dashboard": self._dashboard_state()}
 
     @exposed
+    def quick_create_sfw_model(self) -> dict:
+        result = self.controller.quick_create_sfw_model_mod()
+        result["dashboard"] = self._dashboard_state()
+        return result
+
+    @exposed
     def build_index(self) -> dict:
         if not self.controller.has_game:
             raise RuntimeError("没有检测到游戏。")
