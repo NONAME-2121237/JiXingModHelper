@@ -207,6 +207,17 @@
   <div id="busy-overlay" class="busy-overlay is-hidden"><div class="spinner"></div><span id="busy-text">处理中…</span></div>
   <div id="toast-region" class="toast-region" aria-live="polite"></div>
 
+  <div id="lightbox-overlay" class="lightbox-overlay is-hidden">
+    <div class="lightbox-toolbar">
+      <span id="lightbox-title" class="lightbox-title">图片预览</span>
+      <button id="lightbox-close" class="lightbox-close" title="关闭预览">×</button>
+    </div>
+    <div id="lightbox-stage" class="lightbox-stage">
+      <img id="lightbox-image" alt="大图预览" draggable="false">
+    </div>
+    <div class="lightbox-hint">滚轮缩放 · 拖拽平移 · 点击空白关闭</div>
+  </div>
+
   <div id="crop-modal" class="modal-overlay is-hidden">
     <div class="modal crop-modal">
       <h3>裁剪替换图</h3>

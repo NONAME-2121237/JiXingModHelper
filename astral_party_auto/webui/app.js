@@ -38,6 +38,16 @@
     modBundles: [],
     modBundleActive: "",
     modPreviewTitle: "",
+    lightbox: {
+      scale: 1,
+      tx: 0,
+      ty: 0,
+      dragging: false,
+      startX: 0,
+      startY: 0,
+      origTx: 0,
+      origTy: 0,
+    },
   };
 
   const $ = (sel, root = document) => root.querySelector(sel);
@@ -512,6 +522,102 @@
     else el.innerHTML = `<span>${escapeHtml(fallback || "—")}</span>`;
   }
 
+  function openLightbox(src, title) {
+    const overlay = $("#lightbox-overlay");
+    const img = $("#lightbox-image");
+    const titleEl = $("#lightbox-title");
+    if (!overlay || !img || !src) return;
+    state.lightbox.scale = 1;
+    state.lightbox.tx = 0;
+    state.lightbox.ty = 0;
+    state.lightbox.dragging = false;
+    if (titleEl) titleEl.textContent = title || "图片预览";
+    img.src = src;
+    overlay.classList.remove("is-hidden");
+    img.onload = () => resetLightboxView();
+    if (img.complete && img.naturalWidth) resetLightboxView();
+  }
+
+  function closeLightbox() {
+    const overlay = $("#lightbox-overlay");
+    const img = $("#lightbox-image");
+    const stage = $("#lightbox-stage");
+    if (!overlay) return;
+    overlay.classList.add("is-hidden");
+    if (img) img.src = "";
+    if (stage) stage.classList.remove("dragging");
+    state.lightbox.dragging = false;
+  }
+
+  function resetLightboxView() {
+    const stage = $("#lightbox-stage");
+    const img = $("#lightbox-image");
+    if (!stage || !img || !img.naturalWidth) return;
+    const rect = stage.getBoundingClientRect();
+    const pad = 48;
+    const fit = Math.min(
+      1,
+      (rect.width - pad) / img.naturalWidth,
+      (rect.height - pad) / img.naturalHeight
+    );
+    state.lightbox.scale = Math.max(0.1, fit || 1);
+    state.lightbox.tx = (rect.width - img.naturalWidth * state.lightbox.scale) / 2;
+    state.lightbox.ty = (rect.height - img.naturalHeight * state.lightbox.scale) / 2;
+    applyLightboxTransform();
+  }
+
+  function applyLightboxTransform() {
+    const img = $("#lightbox-image");
+    const s = state.lightbox;
+    if (!img) return;
+    img.style.transform = `translate(${s.tx}px, ${s.ty}px) scale(${s.scale})`;
+  }
+
+  function handleLightboxWheel(e) {
+    e.preventDefault();
+    const stage = $("#lightbox-stage");
+    const s = state.lightbox;
+    if (!stage || !s) return;
+    const rect = stage.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    const factor = e.deltaY < 0 ? 1.18 : 1 / 1.18;
+    const newScale = Math.min(20, Math.max(0.1, s.scale * factor));
+    const ix = (mx - s.tx) / s.scale;
+    const iy = (my - s.ty) / s.scale;
+    s.tx = mx - ix * newScale;
+    s.ty = my - iy * newScale;
+    s.scale = newScale;
+    applyLightboxTransform();
+  }
+
+  function startLightboxDrag(e) {
+    if (e.button !== 0) return;
+    const s = state.lightbox;
+    s.dragging = true;
+    s.startX = e.clientX;
+    s.startY = e.clientY;
+    s.origTx = s.tx;
+    s.origTy = s.ty;
+    const stage = $("#lightbox-stage");
+    if (stage) stage.classList.add("dragging");
+    e.preventDefault();
+  }
+
+  function moveLightboxDrag(e) {
+    const s = state.lightbox;
+    if (!s.dragging) return;
+    s.tx = s.origTx + (e.clientX - s.startX);
+    s.ty = s.origTy + (e.clientY - s.startY);
+    applyLightboxTransform();
+  }
+
+  function endLightboxDrag() {
+    state.lightbox.dragging = false;
+    const stage = $("#lightbox-stage");
+    if (stage) stage.classList.remove("dragging");
+  }
+
   function renderDraftList() {
     const list = $("#draft-list");
     const count = $("#draft-count");
@@ -613,6 +719,29 @@
     $$("[data-action]").forEach((btn) =>
       btn.addEventListener("click", () => doAction(btn.dataset.action))
     );
+
+    // 点击任意预览小图，打开全屏大图预览
+    document.addEventListener("click", (e) => {
+      const img = e.target.closest(".preview-media img");
+      if (img && img.src) {
+        openLightbox(img.src, img.alt || "图片预览");
+      }
+    });
+
+    // 全屏大图预览：关闭 / 滚轮缩放 / 拖拽平移
+    $("#lightbox-close")?.addEventListener("click", closeLightbox);
+    $("#lightbox-overlay")?.addEventListener("click", (e) => {
+      if (e.target === $("#lightbox-overlay") || e.target === $("#lightbox-stage")) {
+        closeLightbox();
+      }
+    });
+    $("#lightbox-stage")?.addEventListener("wheel", handleLightboxWheel, { passive: false });
+    $("#lightbox-image")?.addEventListener("mousedown", startLightboxDrag);
+    window.addEventListener("mousemove", moveLightboxDrag);
+    window.addEventListener("mouseup", endLightboxDrag);
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") closeLightbox();
+    });
 
     $("#choose-mod-folder")?.addEventListener("click", () => chooseMod("folder"));
     $("#choose-mod-archive")?.addEventListener("click", () => chooseMod("archive"));
