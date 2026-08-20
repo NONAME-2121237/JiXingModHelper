@@ -447,6 +447,10 @@ class DesktopApi:
         ]
 
     @exposed
+    def detect_sprite_sheet_frames(self) -> dict:
+        return self.controller.detect_sprite_sheet_frames()
+
+    @exposed
     def get_sprite_sheet_annotations(self) -> dict:
         return self.controller.sprite_sheet_annotations()
 

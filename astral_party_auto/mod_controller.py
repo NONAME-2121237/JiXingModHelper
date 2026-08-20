@@ -105,6 +105,7 @@ class ModController:
         self._dynamic_validating = False
         self._dynamic_sequence_bases: dict[str, set[str]] | None = None
         self._sprite_sheet_annotations: dict[str, dict] = {}
+        self._sprite_sheet_candidates: dict[str, set[str]] = {}
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         self._load_sprite_sheet_annotations()
         self._load_character_labels()
@@ -351,7 +352,8 @@ class ModController:
             fairygui_count = 0
             sprite_sheet_count = 0
             for bundle, names in block.items():
-                for name in names:
+                all_names = set(names) | set(self._sprite_sheet_candidates.get(bundle, set()))
+                for name in all_names:
                     if not self._is_dynamic_valid(bundle, name):
                         continue
                     total += 1
@@ -459,8 +461,11 @@ class ModController:
 
         if asset_type == "dynamic":
             for bundle in sorted(block.keys(), key=str.lower):
-                names = block[bundle]
-                for name in sorted(names, key=str.lower):
+                # 自动检测出的精灵图候选帧也作为独立动态项
+                candidate_names = sorted(self._sprite_sheet_candidates.get(bundle, set()), key=str.lower)
+                base_names = sorted(block[bundle], key=str.lower)
+                all_names = sorted(set(base_names) | set(candidate_names), key=str.lower)
+                for name in all_names:
                     if not self._is_dynamic_valid(bundle, name):
                         continue
                     kind = self._dynamic_kind(bundle, name)
@@ -1621,6 +1626,8 @@ class ModController:
         """用索引快速判断动态资源子类型：sprite_sheet / fairygui / sequence / other。"""
         if self.get_sprite_sheet_animation(bundle, name):
             return "sprite_sheet"
+        if name in self._sprite_sheet_candidates.get(bundle, set()):
+            return "sprite_sheet"
         low = name.lower()
         if "/" in name or low.endswith("_fui") or low.endswith("fui"):
             return "fairygui"
@@ -1757,6 +1764,73 @@ class ModController:
         self._save_sprite_sheet_annotations()
         self._dynamic_sequence_bases = None
         return self.sprite_sheet_annotations()
+
+    def detect_sprite_sheet_frames(self) -> dict:
+        """自动检测连续帧动画中尺寸远大于其它帧的帧，作为精灵图动画候选。"""
+        import statistics
+
+        import UnityPy
+
+        self._sprite_sheet_candidates = {}
+        dynamic_index = self.typed_index.get("dynamic") or {}
+        for bundle, names in dynamic_index.items():
+            path = self.original_bundle_path(bundle)
+            if not path:
+                continue
+            try:
+                env = UnityPy.load(str(path))
+            except Exception:
+                continue
+            frame_sizes: dict[str, tuple[int, int]] = {}
+            for obj in env.objects:
+                if obj.type.name not in ("Texture2D", "Sprite"):
+                    continue
+                try:
+                    data = obj.read()
+                except Exception:
+                    continue
+                fname = str(getattr(data, "m_Name", "") or "")
+                if not fname:
+                    continue
+                if obj.type.name == "Texture2D":
+                    w = int(getattr(data, "m_Width", 0) or 0)
+                    h = int(getattr(data, "m_Height", 0) or 0)
+                else:
+                    rect = getattr(data, "m_Rect", None)
+                    if rect is None:
+                        continue
+                    w = int(getattr(rect, "width", 0) or 0)
+                    h = int(getattr(rect, "height", 0) or 0)
+                if w > 0 and h > 0:
+                    frame_sizes[fname] = (w, h)
+
+            for seq_name in names:
+                # 只处理序列帧组名（不含 / 且不是 _fui）
+                if "/" in seq_name or seq_name.lower().endswith("_fui") or seq_name.lower().endswith("fui"):
+                    continue
+                prefix = seq_name.lower()
+                frames = {
+                    fname: size
+                    for fname, size in frame_sizes.items()
+                    if fname.lower().startswith(prefix) and fname.lower() != seq_name.lower()
+                }
+                if len(frames) < 5:
+                    continue
+                areas = [w * h for w, h in frames.values()]
+                median_area = statistics.median(areas)
+                if median_area <= 0:
+                    continue
+                candidates = {
+                    fname
+                    for fname, (w, h) in frames.items()
+                    if w * h > median_area * 4
+                }
+                if candidates:
+                    self._sprite_sheet_candidates.setdefault(bundle, set()).update(candidates)
+        return {
+            bundle: sorted(frames)
+            for bundle, frames in self._sprite_sheet_candidates.items()
+        }
 
     # ---------- 内部 ----------
     def _require_game(self) -> None:

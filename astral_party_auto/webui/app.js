@@ -376,6 +376,8 @@
       fillResourceCharacterSelect();
       const validateBtn = $("#validate-dynamic");
       if (validateBtn) validateBtn.classList.toggle("is-hidden", state.assetType !== "dynamic");
+      const detectBtn = $("#detect-sprite-sheet");
+      if (detectBtn) detectBtn.classList.toggle("is-hidden", state.assetType !== "dynamic");
       if (!state.categories.some((c) => c.id === state.categoryId)) {
         state.categoryId = state.categories[0]?.id || "all";
       }
@@ -1002,6 +1004,7 @@
     });
     $("#build-index")?.addEventListener("click", buildIndex);
     $("#validate-dynamic")?.addEventListener("click", validateDynamic);
+    $("#detect-sprite-sheet")?.addEventListener("click", detectSpriteSheets);
     $("#resource-prev")?.addEventListener("click", () => {
       if (state.resourcePage > 0) {
         state.resourcePage -= 1;
@@ -1211,6 +1214,14 @@
     } catch (_) {
       setBusy(false);
     }
+  }
+
+  async function detectSpriteSheets() {
+    try {
+      await call("detect_sprite_sheet_frames", { busy: true, busyText: "自动检测精灵图帧…" });
+      toast("精灵图帧检测完成");
+      await refreshBrowse();
+    } catch (_) {}
   }
 
   async function exportSelection(variant) {
