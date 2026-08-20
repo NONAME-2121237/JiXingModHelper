@@ -506,8 +506,26 @@ class DesktopApi:
         return self.controller.set_bundle_character(bundle, character)
 
     @exposed
-    def select_asset(self, asset_type: str, bundle: str, name: str) -> dict:
-        selection = self.controller.set_selection(bundle, name, asset_type=asset_type)
+    def select_asset(self, asset_type: str, bundle: str, name: str, force: bool = False) -> dict:
+        selection = self.controller.set_selection(
+            bundle,
+            name,
+            asset_type=asset_type,
+            force=bool(force),
+        )
+        return self._selection_payload(selection) or {}
+
+    @exposed
+    def refresh_selection(self) -> dict | None:
+        if not self.controller.selection:
+            return None
+        sel = self.controller.selection
+        selection = self.controller.set_selection(
+            sel.get("bundle", ""),
+            sel.get("name", ""),
+            asset_type=sel.get("asset_type") or sel.get("kind") or "texture",
+            force=True,
+        )
         return self._selection_payload(selection) or {}
 
     @exposed

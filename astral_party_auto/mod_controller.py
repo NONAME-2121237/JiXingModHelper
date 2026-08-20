@@ -41,7 +41,7 @@ from .modkit import (
     sorted_sequence_names,
     text_asset_bytes,
 )
-from .modkit.bundles import iter_bundle_entries, read_bundle_asset_names
+from .modkit.bundles import TextureInfo, iter_bundle_entries, read_bundle_asset_names
 from .modkit.categories import (
     ASSET_TYPES,
     category_desc,
@@ -525,13 +525,35 @@ class ModController:
         texture_name: str | None = None,
         *,
         tag: str = "browse",
+        force: bool = False,
     ):
-        """导出预览 PNG。tag 必须区分来源，避免 game/draft 同 stem 互相覆盖。"""
+        """导出预览 PNG；已生成且源文件未变化时直接复用，避免重复解包。
+
+        force=True 时强制重新提取，用于“刷新资源”按钮。
+        tag 必须区分来源，避免 game/draft 同 stem 互相覆盖。
+        """
         bundle_path = Path(bundle_path)
         stem = bundle_path.stem
         safe = re.sub(r"[^\w\-]+", "_", texture_name or "first")[:40]
         tag = re.sub(r"[^\w\-]+", "_", tag or "browse")[:24]
         out = PREVIEW_DIR / f"{tag}_{stem}_{safe}.png"
+
+        if out.exists() and not force:
+            try:
+                if bundle_path.stat().st_mtime_ns <= out.stat().st_mtime_ns:
+                    from PIL import Image
+                    with Image.open(out) as im:
+                        return (
+                            out,
+                            TextureInfo(
+                                name=texture_name or out.stem,
+                                width=im.width,
+                                height=im.height,
+                            ),
+                        )
+            except OSError:
+                pass
+
         info = extract_texture_png(bundle_path, out, target_name=texture_name)
         return (out, info) if info else (None, None)
 
@@ -548,6 +570,7 @@ class ModController:
         asset_name: str,
         *,
         asset_type: str = "texture",
+        force: bool = False,
     ) -> dict:
         """浏览页选中资源，供制作页读取。预览优先备份原皮。"""
         path = self.original_bundle_path(bundle_name)
@@ -556,7 +579,7 @@ class ModController:
         game_path = self.bundle_path(bundle_name)
 
         if asset_type == "texture":
-            png, info = self.preview_bundle(path, asset_name, tag="orig")
+            png, info = self.preview_bundle(path, asset_name, tag="orig", force=force)
             if not png or not info:
                 raise RuntimeError("无法预览该贴图。")
             cat = categorize(info.name, info.width, info.height)
@@ -640,7 +663,7 @@ class ModController:
             png = None
             width = height = 0
             if preview_tex:
-                png, info = self.preview_bundle(path, preview_tex, tag="animprev")
+                png, info = self.preview_bundle(path, preview_tex, tag="animprev", force=force)
                 if info:
                     width, height = info.width, info.height
             self.selection = {
@@ -681,7 +704,7 @@ class ModController:
                 preview_tex = find_sequence_preview_texture(texture_names, asset_name)
                 png = info = None
                 if preview_tex:
-                    png, info = self.preview_bundle(path, preview_tex, tag="dynseq")
+                    png, info = self.preview_bundle(path, preview_tex, tag="dynseq", force=force)
                 frame_names = sorted_sequence_names(group.names)
                 self.selection = {
                     "kind": "dynamic",
@@ -769,7 +792,7 @@ class ModController:
                     atlas_bundle, atlas_name = atlas
                     atlas_path = self.original_bundle_path(atlas_bundle)
                     if atlas_path:
-                        png, info = self.preview_bundle(atlas_path, atlas_name, tag="fgui")
+                        png, info = self.preview_bundle(atlas_path, atlas_name, tag="fgui", force=force)
                         if png and info:
                             cat = categorize(atlas_name, info.width, info.height)
                             self.selection = {
