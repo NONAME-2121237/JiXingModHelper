@@ -28,6 +28,7 @@ from .modkit import (
     export_mod_pack,
     extract_texture_png,
     find_anim_preview_texture,
+    find_fairygui_atlas_texture,
     find_sequence_preview_texture,
     list_text_assets,
     load_asset_index,
@@ -715,6 +716,35 @@ class ModController:
                             if dyn_kind == "fairygui":
                                 text_preview += "\n这是 FairyGUI 界面包，游戏内动态 UI 图通常由它引用序列帧贴图实现。"
                         break
+
+            # FairyGUI 动效：优先映射到对应 atlas 贴图，便于直接预览/替换
+            if kind_label == "FairyGUI 动效":
+                fui_name = asset_name.split("/", 1)[0]
+                atlas = find_fairygui_atlas_texture(self.typed_index.get("texture") or {}, fui_name)
+                if atlas:
+                    atlas_bundle, atlas_name = atlas
+                    atlas_path = self.original_bundle_path(atlas_bundle)
+                    if atlas_path:
+                        png, info = self.preview_bundle(atlas_path, atlas_name, tag="fgui")
+                        if png and info:
+                            cat = categorize(atlas_name, info.width, info.height)
+                            self.selection = {
+                                "kind": "texture",
+                                "asset_type": "texture",
+                                "bundle": atlas_bundle,
+                                "bundle_path": str(self.bundle_path(atlas_bundle) or atlas_path),
+                                "original_path": str(atlas_path),
+                                "name": atlas_name,
+                                "width": info.width,
+                                "height": info.height,
+                                "preview": str(png),
+                                "text_preview": text_preview,
+                                "category": cat,
+                                "category_label": category_label(cat),
+                                "category_desc": f"{kind_desc}\n当前替换目标：{atlas_bundle} [{atlas_name}]",
+                                "caption": f"{kind_label} · {asset_name}（替换 {atlas_name}）",
+                            }
+                            return self.selection
 
             self.selection = {
                 "kind": "dynamic",

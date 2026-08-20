@@ -191,6 +191,36 @@ def extract_fairygui_dynamic_names(raw: bytes) -> list[str]:
     return names
 
 
+def find_fairygui_atlas_texture(
+    texture_index: dict[str, list[str]],
+    fui_name: str,
+) -> tuple[str, str] | None:
+    """在贴图索引里找 FairyGUI 包对应的 atlas 贴图。
+
+    FairyGUI 的 UI 图集通常命名为 ``包名_atlas0``，可能和 fui 包不在同一 bundle。
+    返回 ``(bundle, texture_name)``；找不到返回 None。
+    """
+    stem = fui_name[:-4] if fui_name.lower().endswith("_fui") else fui_name
+    patterns = {
+        f"{stem}_atlas0",
+        f"{fui_name}_atlas0",
+        f"{stem}_atlas",
+        f"{fui_name}_atlas",
+    }
+    stem_l = stem.lower()
+    fui_l = fui_name.lower()
+    for bundle, names in (texture_index or {}).items():
+        for tex in names:
+            low = tex.lower()
+            if "atlas" not in low:
+                continue
+            if tex in patterns:
+                return bundle, tex
+            if low.startswith(stem_l + "_atlas") or low.startswith(fui_l + "_atlas"):
+                return bundle, tex
+    return None
+
+
 def sequence_groups_from_names(
     names: Iterable[str],
     *,

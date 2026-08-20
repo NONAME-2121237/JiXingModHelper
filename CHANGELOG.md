@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.17
+
+### 新增
+
+- FairyGUI 动效预览与贴图更改：
+  - 在「动态图像」中选择 `包名/组件名`（如 `DisplayCard_fui/CutIn`、`Home_fui/Home_Com_Banner`）时，会自动定位到该 FairyGUI 包对应的 atlas 贴图并显示预览；
+  - 可直接进入「制作替换」替换该 atlas 贴图，实现不改动效逻辑的换皮；
+  - 如果暂时找不到对应 atlas，仍会显示所属 FairyGUI 包与组件说明，便于后续扩展。
+
 ## 1.0.16
 
 ### 修复
