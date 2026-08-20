@@ -689,6 +689,8 @@
     const img = $("#lightbox-image");
     const s = state.lightbox;
     if (!img) return;
+    // 必须固定为左上角原点，否则缩放会放大 translate 偏移导致无法居中
+    img.style.transformOrigin = "0 0";
     img.style.transform = `translate(${s.tx}px, ${s.ty}px) scale(${s.scale})`;
   }
 
