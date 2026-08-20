@@ -657,7 +657,12 @@
   function resetLightboxView() {
     const stage = $("#lightbox-stage");
     const img = $("#lightbox-image");
-    if (!stage || !img || !img.naturalWidth) return;
+    if (!stage || !img) return;
+    if (!img.naturalWidth) {
+      // 某些大图 dataURL 在 complete 后仍未解码完成，等待后再适配
+      requestAnimationFrame(resetLightboxView);
+      return;
+    }
     const rect = stage.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) {
       requestAnimationFrame(resetLightboxView);
