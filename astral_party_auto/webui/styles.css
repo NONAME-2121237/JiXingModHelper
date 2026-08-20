@@ -703,6 +703,12 @@ input {
   font-weight: 700;
 }
 
+.sprite-sheet-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
 .list-meta {
   display: flex;
   gap: 12px;

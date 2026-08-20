@@ -23,11 +23,13 @@ from .modkit import (
     bundle_source_key,
     build_asset_index,
     classify_text_asset,
+    compose_sprite_sheet_frames,
     default_export_name,
     export_by_type,
     export_mod_pack,
     extract_texture_png,
     find_anim_preview_texture,
+    find_atlas_texture_name,
     find_fairygui_atlas_texture,
     find_sequence_preview_texture,
     list_text_assets,
@@ -58,6 +60,7 @@ MADE_DIR = APP_ROOT / "made_mods"
 DRAFT_META = DATA_DIR / "draft_pack.json"
 CHARACTER_LABELS_PATH = DATA_DIR / "character_labels.json"
 DYNAMIC_VALID_PATH = DATA_DIR / "dynamic_validation.json"
+SPRITE_SHEET_PATH = DATA_DIR / "sprite_sheet_animations.json"
 
 SEVENZIP_CANDIDATES = [
     Path(r"C:\Program Files\7-Zip\7z.exe"),
@@ -101,7 +104,9 @@ class ModController:
         self._valid_dynamic: dict[str, set[str]] = {}
         self._dynamic_validating = False
         self._dynamic_sequence_bases: dict[str, set[str]] | None = None
+        self._sprite_sheet_annotations: dict[str, dict] = {}
         DATA_DIR.mkdir(parents=True, exist_ok=True)
+        self._load_sprite_sheet_annotations()
         self._load_character_labels()
         self._prune_character_labels()
         PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
@@ -344,6 +349,7 @@ class ModController:
             total = 0
             sequence_count = 0
             fairygui_count = 0
+            sprite_sheet_count = 0
             for bundle, names in block.items():
                 for name in names:
                     if not self._is_dynamic_valid(bundle, name):
@@ -354,10 +360,13 @@ class ModController:
                         sequence_count += 1
                     elif kind == "fairygui":
                         fairygui_count += 1
+                    elif kind == "sprite_sheet":
+                        sprite_sheet_count += 1
             return [
                 ("all", "全部", total),
                 ("sequence", "序列帧动画组", sequence_count),
                 ("fairygui", "FairyGUI", fairygui_count),
+                ("sprite_sheet", "精灵图动画", sprite_sheet_count),
             ]
 
         if asset_type != "texture":
@@ -458,6 +467,8 @@ class ModController:
                     if cat_id == "sequence" and kind != "sequence":
                         continue
                     if cat_id == "fairygui" and kind != "fairygui":
+                        continue
+                    if cat_id == "sprite_sheet" and kind != "sprite_sheet":
                         continue
                     if q and q not in name.lower() and q not in bundle.lower():
                         continue
@@ -692,6 +703,68 @@ class ModController:
             return self.selection
 
         if asset_type == "dynamic":
+            ss_params = self.get_sprite_sheet_animation(bundle_name, asset_name)
+            if ss_params:
+                import UnityPy
+
+                env = UnityPy.load(str(path))
+                texture_names: list[str] = []
+                atlas_image = None
+                for obj in env.objects:
+                    if obj.type.name != "Texture2D":
+                        continue
+                    try:
+                        data = obj.read()
+                    except Exception:
+                        continue
+                    tname = str(getattr(data, "m_Name", "") or "")
+                    if tname:
+                        texture_names.append(tname)
+                    if tname == asset_name or (atlas_image is None and asset_name.lower() in tname.lower()):
+                        atlas_image = getattr(data, "image", None)
+                atlas_name = find_atlas_texture_name(texture_names, asset_name)
+                if atlas_image is None and atlas_name:
+                    for obj in env.objects:
+                        if obj.type.name == "Texture2D":
+                            data = obj.read()
+                            if str(getattr(data, "m_Name", "") or "") == atlas_name:
+                                atlas_image = getattr(data, "image", None)
+                                break
+                if atlas_image is None:
+                    raise RuntimeError(f"找不到精灵图 atlas 贴图：{asset_name}")
+                frames = compose_sprite_sheet_frames(atlas_image, **ss_params)
+                if not frames:
+                    raise RuntimeError("精灵图参数未能生成任何帧。")
+                safe = re.sub(r"[^\w\-]+", "_", asset_name)[:40] or "spritesheet"
+                preview_png = PREVIEW_DIR / f"spritesheet_{bundle_name[:16]}_{safe}.png"
+                preview_png.parent.mkdir(parents=True, exist_ok=True)
+                frames[0].convert("RGBA").save(preview_png)
+                self.selection = {
+                    "kind": "dynamic",
+                    "asset_type": "dynamic",
+                    "bundle": bundle_name,
+                    "bundle_path": str(game_path or path),
+                    "original_path": str(path),
+                    "name": asset_name,
+                    "preview_texture": atlas_name or "",
+                    "frame_names": [],
+                    "fps": 30,
+                    "width": frames[0].width,
+                    "height": frames[0].height,
+                    "preview": str(preview_png),
+                    "text_preview": (
+                        f"精灵图动画：{asset_name}\n"
+                        f"atlas：{atlas_name or '（自动匹配）'}\n"
+                        f"参数：{ss_params.get('frame_cols')}x{ss_params.get('frame_rows')} 块/帧，共 {ss_params.get('frame_count')} 帧\n"
+                        "按已保存的精灵图参数组合播放。"
+                    ),
+                    "category": "all",
+                    "category_label": "精灵图动画",
+                    "category_desc": "精灵图动画 · 按用户标注参数组合帧",
+                    "caption": f"精灵图动画 · {asset_name}（{ss_params.get('frame_count')}帧）",
+                }
+                return self.selection
+
             # 用与索引一致的贴图名集合（Texture2D + Sprite，已去重）
             names_by_type = read_bundle_asset_names(path)
             texture_names = names_by_type.get("texture") or []
@@ -1545,7 +1618,9 @@ class ModController:
         return self._dynamic_sequence_bases
 
     def _dynamic_kind(self, bundle: str, name: str) -> str:
-        """用索引快速判断动态资源子类型：fairygui / sequence / other。"""
+        """用索引快速判断动态资源子类型：sprite_sheet / fairygui / sequence / other。"""
+        if self.get_sprite_sheet_animation(bundle, name):
+            return "sprite_sheet"
         low = name.lower()
         if "/" in name or low.endswith("_fui") or low.endswith("fui"):
             return "fairygui"
@@ -1624,6 +1699,64 @@ class ModController:
 
         # 其它动态资源：索引里存在即可
         return True
+
+    # ---------- 精灵图动画标注 ----------
+    def _sprite_sheet_key(self, bundle: str, name: str) -> str:
+        return f"{bundle}::{name}"
+
+    def _load_sprite_sheet_annotations(self) -> None:
+        try:
+            data = json.loads(SPRITE_SHEET_PATH.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return
+        if isinstance(data, dict):
+            self._sprite_sheet_annotations = {
+                str(k): dict(v) for k, v in data.items() if isinstance(v, dict)
+            }
+
+    def _save_sprite_sheet_annotations(self) -> None:
+        SPRITE_SHEET_PATH.parent.mkdir(parents=True, exist_ok=True)
+        SPRITE_SHEET_PATH.write_text(
+            json.dumps(self._sprite_sheet_annotations, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+    def sprite_sheet_annotations(self) -> dict:
+        return {
+            key: dict(params)
+            for key, params in self._sprite_sheet_annotations.items()
+        }
+
+    def get_sprite_sheet_animation(self, bundle: str, name: str) -> dict | None:
+        params = self._sprite_sheet_annotations.get(self._sprite_sheet_key(bundle, name))
+        return dict(params) if params else None
+
+    def set_sprite_sheet_animation(
+        self,
+        bundle: str,
+        name: str,
+        params: dict,
+    ) -> dict:
+        clean = {
+            "tile_width": int(params.get("tile_width") or 0),
+            "tile_height": int(params.get("tile_height") or 0),
+            "sheet_cols": int(params.get("sheet_cols") or 0),
+            "frame_cols": int(params.get("frame_cols") or 0),
+            "frame_rows": int(params.get("frame_rows") or 0),
+            "frame_count": int(params.get("frame_count") or 0),
+        }
+        if any(v <= 0 for v in clean.values()):
+            raise RuntimeError("精灵图参数必须全部大于 0。")
+        self._sprite_sheet_annotations[self._sprite_sheet_key(bundle, name)] = clean
+        self._save_sprite_sheet_annotations()
+        self._dynamic_sequence_bases = None
+        return self.sprite_sheet_annotations()
+
+    def clear_sprite_sheet_animation(self, bundle: str, name: str) -> dict:
+        self._sprite_sheet_annotations.pop(self._sprite_sheet_key(bundle, name), None)
+        self._save_sprite_sheet_annotations()
+        self._dynamic_sequence_bases = None
+        return self.sprite_sheet_annotations()
 
     # ---------- 内部 ----------
     def _require_game(self) -> None:

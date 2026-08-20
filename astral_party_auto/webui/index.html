@@ -158,6 +158,21 @@
                   <button id="apply-bundle-character" class="button ghost compact" disabled>整个Bundle标注</button>
                 </div>
               </div>
+              <div id="sprite-sheet-box" class="character-label-box is-hidden">
+                <label>精灵图动画参数</label>
+                <div class="sprite-sheet-grid">
+                  <input id="ss-tile-w" type="number" min="1" placeholder="小块宽">
+                  <input id="ss-tile-h" type="number" min="1" placeholder="小块高">
+                  <input id="ss-cols" type="number" min="1" placeholder="总列数">
+                  <input id="ss-fcols" type="number" min="1" placeholder="每帧横块">
+                  <input id="ss-frows" type="number" min="1" placeholder="每帧竖块">
+                  <input id="ss-fcount" type="number" min="1" placeholder="帧数">
+                </div>
+                <div class="action-row two-up">
+                  <button id="ss-save" class="button ghost compact">保存精灵图设置</button>
+                  <button id="ss-clear" class="button ghost compact">清除设置</button>
+                </div>
+              </div>
             </aside>
           </div>
         </section>

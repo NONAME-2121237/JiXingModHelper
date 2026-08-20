@@ -221,6 +221,64 @@ def find_fairygui_atlas_texture(
     return None
 
 
+def find_atlas_texture_name(texture_names: Sequence[str], base_name: str) -> str | None:
+    """在贴图名里找精灵图动画对应的整张 atlas 贴图。"""
+    low_base = base_name.lower()
+    candidates = [
+        f"{base_name}-001",
+        f"{base_name}_atlas0",
+        f"{base_name}_atlas",
+        f"{base_name}",
+        f"{base_name}-1",
+    ]
+    for cand in candidates:
+        if cand in texture_names:
+            return cand
+    for tex in texture_names:
+        low = tex.lower()
+        if low.startswith(low_base) and ("001" in low or "atlas" in low):
+            return tex
+    return None
+
+
+def compose_sprite_sheet_frames(
+    atlas_image,
+    *,
+    tile_width: int,
+    tile_height: int,
+    sheet_cols: int,
+    frame_cols: int,
+    frame_rows: int,
+    frame_count: int,
+):
+    """按 Z 形（行优先）从精灵图里切出小块并拼成 n 帧动画。"""
+    from PIL import Image
+
+    if tile_width <= 0 or tile_height <= 0 or sheet_cols <= 0:
+        raise ValueError("精灵图参数不合法：小块尺寸/列数必须大于 0")
+    if frame_cols <= 0 or frame_rows <= 0 or frame_count <= 0:
+        raise ValueError("精灵图参数不合法：每帧块数/帧数必须大于 0")
+
+    frames = []
+    tiles_per_frame = frame_cols * frame_rows
+    for frame_index in range(frame_count):
+        canvas = Image.new("RGBA", (frame_cols * tile_width, frame_rows * tile_height))
+        for i in range(tiles_per_frame):
+            tile_index = frame_index * tiles_per_frame + i
+            col = tile_index % sheet_cols
+            row = tile_index // sheet_cols
+            left = col * tile_width
+            top = row * tile_height
+            right = left + tile_width
+            bottom = top + tile_height
+            tile = atlas_image.crop((left, top, right, bottom))
+            fx = (i % frame_cols) * tile_width
+            fy = (i // frame_cols) * tile_height
+            canvas.paste(tile, (fx, fy))
+        frames.append(canvas)
+    return frames
+
+
 def sequence_groups_from_names(
     names: Iterable[str],
     *,

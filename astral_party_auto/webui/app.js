@@ -34,6 +34,7 @@
     characterFilter: "",
     characterList: [],
     characterLabels: { bundles: {}, resources: {} },
+    spriteSheetAnns: {},
     selection: null,
     draftIndex: -1,
     pendingMod: null,
@@ -337,17 +338,40 @@
     return state.characterLabels?.bundles?.[bundle] || "";
   }
 
+  function spriteSheetKey(bundle, name) {
+    return `${bundle}::${name}`;
+  }
+
+  function updateSpriteSheetBox() {
+    const box = $("#sprite-sheet-box");
+    if (!box) return;
+    const sel = state.selection;
+    const isDynamic = sel && (sel.asset_type || sel.kind) === "dynamic";
+    box.classList.toggle("is-hidden", !isDynamic);
+    if (!isDynamic) return;
+    const params = state.spriteSheetAnns[spriteSheetKey(sel.bundle, sel.name)] || {};
+    const setVal = (id, val) => { const el = $(id); if (el) el.value = val || ""; };
+    setVal("#ss-tile-w", params.tile_width);
+    setVal("#ss-tile-h", params.tile_height);
+    setVal("#ss-cols", params.sheet_cols);
+    setVal("#ss-fcols", params.frame_cols);
+    setVal("#ss-frows", params.frame_rows);
+    setVal("#ss-fcount", params.frame_count);
+  }
+
   async function refreshBrowse() {
     fillAssetTypes();
     try {
-      const [cats, charList, labels] = await Promise.all([
+      const [cats, charList, labels, ssAnns] = await Promise.all([
         call("get_categories", { quiet: true }, state.assetType),
         call("get_character_list", { quiet: true }),
         call("get_character_labels", { quiet: true }),
+        call("get_sprite_sheet_annotations", { quiet: true }),
       ]);
       state.categories = cats || [];
       state.characterList = charList || [];
       state.characterLabels = labels || { bundles: {}, resources: {} };
+      state.spriteSheetAnns = ssAnns || {};
       fillCharacterFilter();
       fillResourceCharacterSelect();
       const validateBtn = $("#validate-dynamic");
@@ -453,14 +477,24 @@
     try {
       const sel = await call("select_asset", { busy: true, busyText: "加载预览…" }, state.assetType, bundle, name);
       state.selection = sel;
-      if (sel.asset_type === "dynamic" && sel.frame_names && sel.frame_names.length) {
-        const seq = await call("get_sequence_frames", { quiet: true }, bundle, name);
-        state.sequenceFrames = (seq && seq.frames) || [];
-        state.sequenceFps = (seq && seq.fps) || 30;
+      if (sel.asset_type === "dynamic") {
+        if (state.spriteSheetAnns[spriteSheetKey(bundle, name)]) {
+          const ss = await call("get_sprite_sheet_frames", { quiet: true }, bundle, name);
+          state.sequenceFrames = (ss && ss.frames) || [];
+          state.sequenceFps = (ss && ss.fps) || 30;
+        } else if (sel.frame_names && sel.frame_names.length) {
+          const seq = await call("get_sequence_frames", { quiet: true }, bundle, name);
+          state.sequenceFrames = (seq && seq.frames) || [];
+          state.sequenceFps = (seq && seq.fps) || 30;
+        } else {
+          state.sequenceFrames = [];
+          state.sequenceFps = 30;
+        }
       } else {
         state.sequenceFrames = [];
         state.sequenceFps = 30;
       }
+      updateSpriteSheetBox();
       renderPreview();
       renderResources();
       updateExportButtons();
@@ -992,6 +1026,8 @@
     $("#export-primary")?.addEventListener("click", () => exportSelection("primary"));
     $("#export-secondary")?.addEventListener("click", () => exportSelection("secondary"));
     $("#refresh-resource")?.addEventListener("click", refreshResource);
+    $("#ss-save")?.addEventListener("click", saveSpriteSheet);
+    $("#ss-clear")?.addEventListener("click", clearSpriteSheet);
 
     $("#choose-replacement")?.addEventListener("click", chooseReplacement);
     $("#crop-replacement")?.addEventListener("click", cropReplacement);
@@ -1191,13 +1227,22 @@
     try {
       const sel = await call("refresh_selection", { busy: true, busyText: "刷新资源…" });
       state.selection = sel;
-      if (sel && sel.asset_type === "dynamic" && sel.frame_names && sel.frame_names.length) {
-        const seq = await call("get_sequence_frames", { quiet: true }, sel.bundle, sel.name);
-        state.sequenceFrames = (seq && seq.frames) || [];
-        state.sequenceFps = (seq && seq.fps) || 30;
+      if (sel && sel.asset_type === "dynamic") {
+        if (state.spriteSheetAnns[spriteSheetKey(sel.bundle, sel.name)]) {
+          const ss = await call("get_sprite_sheet_frames", { quiet: true }, sel.bundle, sel.name);
+          state.sequenceFrames = (ss && ss.frames) || [];
+          state.sequenceFps = (ss && ss.fps) || 30;
+        } else if (sel.frame_names && sel.frame_names.length) {
+          const seq = await call("get_sequence_frames", { quiet: true }, sel.bundle, sel.name);
+          state.sequenceFrames = (seq && seq.frames) || [];
+          state.sequenceFps = (seq && seq.fps) || 30;
+        } else {
+          state.sequenceFrames = [];
+        }
       } else {
         state.sequenceFrames = [];
       }
+      updateSpriteSheetBox();
       renderPreview();
       updateExportButtons();
       fillResourceCharacterSelect();
@@ -1205,6 +1250,38 @@
       const charSel = $("#resource-character");
       if (charSel) charSel.value = eff || "";
       toast("资源已刷新");
+    } catch (_) {}
+  }
+
+  async function saveSpriteSheet() {
+    if (!state.selection) return;
+    const sel = state.selection;
+    const params = {
+      tile_width: parseInt($("#ss-tile-w")?.value || "0", 10),
+      tile_height: parseInt($("#ss-tile-h")?.value || "0", 10),
+      sheet_cols: parseInt($("#ss-cols")?.value || "0", 10),
+      frame_cols: parseInt($("#ss-fcols")?.value || "0", 10),
+      frame_rows: parseInt($("#ss-frows")?.value || "0", 10),
+      frame_count: parseInt($("#ss-fcount")?.value || "0", 10),
+    };
+    try {
+      state.spriteSheetAnns = await call("set_sprite_sheet_animation", { busy: true, busyText: "保存精灵图设置…" }, sel.bundle, sel.name, params);
+      updateSpriteSheetBox();
+      await selectResource(sel.bundle, sel.name);
+      await loadResources();
+      toast("精灵图动画参数已保存");
+    } catch (_) {}
+  }
+
+  async function clearSpriteSheet() {
+    if (!state.selection) return;
+    const sel = state.selection;
+    try {
+      state.spriteSheetAnns = await call("clear_sprite_sheet_animation", { quiet: true }, sel.bundle, sel.name);
+      updateSpriteSheetBox();
+      await selectResource(sel.bundle, sel.name);
+      await loadResources();
+      toast("已清除精灵图动画设置");
     } catch (_) {}
   }
 

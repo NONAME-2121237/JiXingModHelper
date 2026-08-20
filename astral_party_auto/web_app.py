@@ -447,6 +447,74 @@ class DesktopApi:
         ]
 
     @exposed
+    def get_sprite_sheet_annotations(self) -> dict:
+        return self.controller.sprite_sheet_annotations()
+
+    @exposed
+    def set_sprite_sheet_animation(self, bundle: str, name: str, params: dict) -> dict:
+        return self.controller.set_sprite_sheet_animation(bundle, name, params)
+
+    @exposed
+    def clear_sprite_sheet_animation(self, bundle: str, name: str) -> dict:
+        return self.controller.clear_sprite_sheet_animation(bundle, name)
+
+    @exposed
+    def get_sprite_sheet_frames(self, bundle: str, name: str) -> dict:
+        import tempfile
+
+        import UnityPy
+
+        from astral_party_auto.modkit.dynamic import (
+            compose_sprite_sheet_frames,
+            find_atlas_texture_name,
+        )
+
+        params = self.controller.get_sprite_sheet_animation(bundle, name)
+        if not params:
+            raise RuntimeError("请先保存精灵图动画参数。")
+        path = self.controller.original_bundle_path(bundle)
+        if not path:
+            raise RuntimeError(f"找不到资源包：{bundle}")
+        env = UnityPy.load(str(path))
+        texture_names: list[str] = []
+        atlas_image = None
+        for obj in env.objects:
+            if obj.type.name != "Texture2D":
+                continue
+            try:
+                data = obj.read()
+            except Exception:
+                continue
+            tname = str(getattr(data, "m_Name", "") or "")
+            if tname:
+                texture_names.append(tname)
+            if tname == name or (atlas_image is None and name.lower() in tname.lower()):
+                atlas_image = getattr(data, "image", None)
+        atlas_name = find_atlas_texture_name(texture_names, name)
+        if atlas_image is None and atlas_name:
+            for obj in env.objects:
+                if obj.type.name == "Texture2D":
+                    data = obj.read()
+                    if str(getattr(data, "m_Name", "") or "") == atlas_name:
+                        atlas_image = getattr(data, "image", None)
+                        break
+        if atlas_image is None:
+            raise RuntimeError(f"找不到精灵图 atlas 贴图：{name}")
+
+        frames = compose_sprite_sheet_frames(atlas_image, **params)
+        data_urls = []
+        with tempfile.TemporaryDirectory(prefix="sprite_sheet_") as tmp:
+            for index, frame in enumerate(frames):
+                png_path = Path(tmp) / f"frame_{index:04d}.png"
+                frame.convert("RGBA").save(png_path)
+                data_urls.append(self._image_data(png_path))
+        return {
+            "frames": data_urls,
+            "fps": 30,
+            "total": len(frames),
+        }
+
+    @exposed
     def get_sequence_frames(self, bundle: str, name: str) -> dict:
         from astral_party_auto.modkit.bundles import read_bundle_asset_names
         from astral_party_auto.modkit.dynamic import (
