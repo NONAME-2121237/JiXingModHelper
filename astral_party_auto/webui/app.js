@@ -350,6 +350,8 @@
       state.characterLabels = labels || { bundles: {}, resources: {} };
       fillCharacterFilter();
       fillResourceCharacterSelect();
+      const validateBtn = $("#validate-dynamic");
+      if (validateBtn) validateBtn.classList.toggle("is-hidden", state.assetType !== "dynamic");
       if (!state.categories.some((c) => c.id === state.categoryId)) {
         state.categoryId = state.categories[0]?.id || "all";
       }
@@ -958,6 +960,7 @@
       }
     });
     $("#build-index")?.addEventListener("click", buildIndex);
+    $("#validate-dynamic")?.addEventListener("click", validateDynamic);
     $("#resource-prev")?.addEventListener("click", () => {
       if (state.resourcePage > 0) {
         state.resourcePage -= 1;
@@ -1151,6 +1154,16 @@
       await call("build_index", { busy: false });
       setBusy(true, "建索引…");
       toast("开始扫描资源包…");
+    } catch (_) {
+      setBusy(false);
+    }
+  }
+
+  async function validateDynamic() {
+    try {
+      await call("validate_dynamic", { busy: false });
+      setBusy(true, "校验动态资源…");
+      toast("开始校验动态资源，请稍候…");
     } catch (_) {
       setBusy(false);
     }
@@ -1414,6 +1427,16 @@
           }
         })
         .catch(() => {});
+    } else if (event === "dynamic_validate_progress") {
+      setBusy(true, `校验动态资源… ${payload.done || 0}/${payload.total || "?"}`);
+    } else if (event === "dynamic_validate_done") {
+      setBusy(false);
+      if (payload.error) {
+        toast(payload.error, true);
+      } else {
+        toast(`动态资源校验完成：有效 ${payload.valid || 0}/${payload.total || 0}，已隐藏 ${payload.invalid || 0} 个无效资源`);
+      }
+      if (state.page === "browse") refreshBrowse();
     }
   };
 

@@ -57,6 +57,7 @@ PREVIEW_DIR = DATA_DIR / "previews"
 MADE_DIR = APP_ROOT / "made_mods"
 DRAFT_META = DATA_DIR / "draft_pack.json"
 CHARACTER_LABELS_PATH = DATA_DIR / "character_labels.json"
+DYNAMIC_VALID_PATH = DATA_DIR / "dynamic_validation.json"
 
 SEVENZIP_CANDIDATES = [
     Path(r"C:\Program Files\7-Zip\7z.exe"),
@@ -96,6 +97,10 @@ class ModController:
         # 角色标注：bundle 级 + 资源级覆盖
         self._bundle_labels: dict[str, str] = {}
         self._resource_labels: dict[str, dict[str, str]] = {}
+        # 动态资源校验结果：bundle -> 有效资源名集合
+        self._valid_dynamic: dict[str, set[str]] = {}
+        self._dynamic_validating = False
+        self._dynamic_sequence_bases: dict[str, set[str]] | None = None
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         self._load_character_labels()
         self._prune_character_labels()
@@ -197,6 +202,7 @@ class ModController:
             self._category_rows = {}
             self._category_counts = {}
             self._index_source_key = source_key
+            self._load_dynamic_validation(source_key)
 
     @property
     def has_game(self) -> bool:
@@ -333,6 +339,27 @@ class ModController:
         include_advanced: bool = False,
         asset_type: str = "texture",
     ) -> list[tuple[str, str, int]]:
+        if asset_type == "dynamic":
+            block = self.typed_index.get("dynamic") or {}
+            total = 0
+            sequence_count = 0
+            fairygui_count = 0
+            for bundle, names in block.items():
+                for name in names:
+                    if not self._is_dynamic_valid(bundle, name):
+                        continue
+                    total += 1
+                    kind = self._dynamic_kind(bundle, name)
+                    if kind == "sequence":
+                        sequence_count += 1
+                    elif kind == "fairygui":
+                        fairygui_count += 1
+            return [
+                ("all", "全部", total),
+                ("sequence", "序列帧动画组", sequence_count),
+                ("fairygui", "FairyGUI", fairygui_count),
+            ]
+
         if asset_type != "texture":
             # 非贴图：只有「全部」一类，避免硬套贴图分类
             block = self.typed_index.get(asset_type) or {}
@@ -420,6 +447,23 @@ class ModController:
             return
 
         block = self.typed_index.get(asset_type) or {}
+
+        if asset_type == "dynamic":
+            for bundle in sorted(block.keys(), key=str.lower):
+                names = block[bundle]
+                for name in sorted(names, key=str.lower):
+                    if not self._is_dynamic_valid(bundle, name):
+                        continue
+                    kind = self._dynamic_kind(bundle, name)
+                    if cat_id == "sequence" and kind != "sequence":
+                        continue
+                    if cat_id == "fairygui" and kind != "fairygui":
+                        continue
+                    if q and q not in name.lower() and q not in bundle.lower():
+                        continue
+                    yield bundle, name
+            return
+
         for bundle in sorted(block.keys(), key=str.lower):
             names = block[bundle]
             for name in sorted(names, key=str.lower):
@@ -1432,6 +1476,131 @@ class ModController:
             if value:
                 return value
         return self._bundle_labels.get(str(bundle), "")
+
+    # ---------- 动态资源校验 ----------
+    def _load_dynamic_validation(self, source_key: str) -> None:
+        self._valid_dynamic = {}
+        if not source_key:
+            return
+        try:
+            data = json.loads(DYNAMIC_VALID_PATH.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return
+        if not isinstance(data, dict) or data.get("source") != source_key:
+            return
+        valid = data.get("valid")
+        if not isinstance(valid, dict):
+            return
+        self._valid_dynamic = {
+            str(bundle): {str(name) for name in names if isinstance(name, str)}
+            for bundle, names in valid.items()
+            if isinstance(names, list)
+        }
+
+    def _save_dynamic_validation(self) -> None:
+        source_key = bundle_source_key(self.aa_dirs) if self.aa_dirs else ""
+        payload = {
+            "source": source_key,
+            "valid": {
+                bundle: sorted(names)
+                for bundle, names in self._valid_dynamic.items()
+            },
+        }
+        DYNAMIC_VALID_PATH.parent.mkdir(parents=True, exist_ok=True)
+        DYNAMIC_VALID_PATH.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+    def _dynamic_sequence_bases_map(self) -> dict[str, set[str]]:
+        if self._dynamic_sequence_bases is None:
+            bases: dict[str, set[str]] = {}
+            for bundle, names in (self.typed_index.get("texture") or {}).items():
+                for group in sequence_groups_from_names(names):
+                    bases.setdefault(bundle, set()).add(group.base)
+            self._dynamic_sequence_bases = bases
+        return self._dynamic_sequence_bases
+
+    def _dynamic_kind(self, bundle: str, name: str) -> str:
+        """用索引快速判断动态资源子类型：fairygui / sequence / other。"""
+        low = name.lower()
+        if "/" in name or low.endswith("_fui") or low.endswith("fui"):
+            return "fairygui"
+        if name in self._dynamic_sequence_bases_map().get(bundle, set()):
+            return "sequence"
+        return "other"
+
+    def _is_dynamic_valid(self, bundle: str, name: str) -> bool:
+        """未校验时默认全部显示；校验后只显示有效资源。"""
+        if not self._valid_dynamic:
+            return True
+        return name in self._valid_dynamic.get(bundle, set())
+
+    def validate_dynamic_resources(
+        self,
+        progress: Callable[[int, int, str], None] | None = None,
+    ) -> dict:
+        """扫描 dynamic 索引并校验每个资源是否可找到实际资源。"""
+        if self._dynamic_validating:
+            raise RuntimeError("动态资源校验已经在进行中。")
+        self._dynamic_validating = True
+        try:
+            dynamic_index = self.typed_index.get("dynamic") or {}
+            total = sum(len(names) for names in dynamic_index.values())
+            done = 0
+            valid: dict[str, set[str]] = {}
+            for bundle, names in dynamic_index.items():
+                for name in names:
+                    if progress is not None:
+                        progress(done, total, f"{bundle} :: {name}")
+                    if self._is_dynamic_resource_valid(bundle, name):
+                        valid.setdefault(bundle, set()).add(name)
+                    done += 1
+            self._valid_dynamic = valid
+            self._save_dynamic_validation()
+            valid_count = sum(len(v) for v in valid.values())
+            return {
+                "total": total,
+                "valid": valid_count,
+                "invalid": total - valid_count,
+            }
+        finally:
+            self._dynamic_validating = False
+
+    def _is_dynamic_resource_valid(self, bundle: str, name: str) -> bool:
+        path = self.original_bundle_path(bundle)
+        if not path:
+            return False
+        try:
+            names_by_type = read_bundle_asset_names(path)
+        except Exception:
+            return False
+        texture_names = names_by_type.get("texture") or []
+        low = name.lower()
+
+        # FairyGUI：需要能找到对应 atlas 贴图
+        if "/" in name or low.endswith("_fui") or low.endswith("fui"):
+            fui_name = name.split("/", 1)[0] if "/" in name else name
+            atlas = find_fairygui_atlas_texture(
+                self.typed_index.get("texture") or {},
+                fui_name,
+            )
+            if not atlas:
+                return False
+            atlas_bundle, atlas_name = atlas
+            atlas_path = self.original_bundle_path(atlas_bundle)
+            return atlas_path is not None
+
+        # 序列帧：需要同包内确实存在帧贴图
+        groups = [
+            group for group in sequence_groups_from_names(texture_names)
+            if group.base == name
+        ]
+        if groups:
+            return find_sequence_preview_texture(texture_names, name) is not None
+
+        # 其它动态资源：索引里存在即可
+        return True
 
     # ---------- 内部 ----------
     def _require_game(self) -> None:

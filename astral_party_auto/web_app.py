@@ -751,6 +751,27 @@ class DesktopApi:
         return {"started": True}
 
     @exposed
+    def validate_dynamic(self) -> dict:
+        if not self.controller.has_game:
+            raise RuntimeError("没有检测到游戏。")
+
+        def progress(done: int, total: int, current: str) -> None:
+            self._emit(
+                "dynamic_validate_progress",
+                {"done": done, "total": total, "current": current},
+            )
+
+        def worker() -> None:
+            try:
+                result = self.controller.validate_dynamic_resources(progress)
+                self._emit("dynamic_validate_done", result)
+            except Exception as exc:
+                self._emit("dynamic_validate_done", {"error": str(exc)})
+
+        threading.Thread(target=worker, daemon=True).start()
+        return {"started": True}
+
+    @exposed
     def get_logs(self) -> list[str]:
         return list(self._logs)
 
