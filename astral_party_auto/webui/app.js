@@ -663,20 +663,22 @@
       requestAnimationFrame(resetLightboxView);
       return;
     }
-    const rect = stage.getBoundingClientRect();
-    if (rect.width <= 0 || rect.height <= 0) {
-      requestAnimationFrame(resetLightboxView);
-      return;
-    }
+    // 以实际窗口客户区为准，避免个别环境下 stage.getBoundingClientRect 返回异常尺寸。
+    const viewportW = window.innerWidth || stage.clientWidth || 800;
+    const viewportH = window.innerHeight || stage.clientHeight || 600;
+    const toolbar = $("#lightbox-toolbar");
+    const toolbarH = toolbar ? toolbar.getBoundingClientRect().height : 56;
+    const availW = Math.max(100, viewportW);
+    const availH = Math.max(100, viewportH - toolbarH);
     const pad = 48;
     const fit = Math.min(
       1,
-      (rect.width - pad) / img.naturalWidth,
-      (rect.height - pad) / img.naturalHeight
+      (availW - pad) / img.naturalWidth,
+      (availH - pad) / img.naturalHeight
     );
     state.lightbox.scale = Math.max(0.1, fit || 1);
-    state.lightbox.tx = (rect.width - img.naturalWidth * state.lightbox.scale) / 2;
-    state.lightbox.ty = (rect.height - img.naturalHeight * state.lightbox.scale) / 2;
+    state.lightbox.tx = (availW - img.naturalWidth * state.lightbox.scale) / 2;
+    state.lightbox.ty = (availH - img.naturalHeight * state.lightbox.scale) / 2;
     // 固定图片布局尺寸，切换序列帧时保持缩放/平移对齐
     img.style.width = img.naturalWidth + "px";
     img.style.height = img.naturalHeight + "px";
