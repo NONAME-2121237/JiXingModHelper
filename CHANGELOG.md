@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.0.8
+
+### 新增
+
+- 浏览资源新增「动态图像」类型：
+  - 自动索引并展示序列帧贴图组、视频、FairyGUI 动态 UI 包、Live2D/Spine/DragonBones/GIF/WebP/APNG 候选。
+  - 序列帧贴图组会显示组名、帧数、帧号范围和首帧预览。
+  - 视频 / FairyGUI 等资源会显示资源类型与简要说明。
+  - 动态资源支持导出：序列帧导出首帧 PNG，其它动态资源导出原始字节。
+- 底层新增 `astral_party_auto/modkit/dynamic.py`：
+  - 集中管理动态 2D 资源识别规则，方便后续扩展新引擎/新格式。
+  - 索引结构增加 `dynamic` 类型，索引版本升级到 6，刷新索引后生效。
+- 新增本地动态 2D 资源扫描测试脚本：
+  - `tests/dynamic_scan/scan_dynamic_images.py`
+  - 可扫描本机游戏资源，统计 Unity 资源种类，并输出序列帧、视频、FairyGUI、Live2D/Spine/GIF 等候选清单。
+
 ## 1.0.7
 
 ### 修复
