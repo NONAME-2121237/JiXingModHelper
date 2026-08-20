@@ -634,10 +634,12 @@
     };
     img.onload = () => {
       img.onload = null;
-      init();
+      requestAnimationFrame(init);
     };
     img.src = src;
-    if (img.complete && img.naturalWidth) init();
+    if (img.complete && img.naturalWidth) {
+      requestAnimationFrame(init);
+    }
   }
 
   function closeLightbox() {
@@ -657,6 +659,10 @@
     const img = $("#lightbox-image");
     if (!stage || !img || !img.naturalWidth) return;
     const rect = stage.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) {
+      requestAnimationFrame(resetLightboxView);
+      return;
+    }
     const pad = 48;
     const fit = Math.min(
       1,
