@@ -622,17 +622,22 @@
     state.lightbox.tx = 0;
     state.lightbox.ty = 0;
     state.lightbox.dragging = false;
+    stopLightboxSequence();
     if (titleEl) titleEl.textContent = title || "图片预览";
-    img.src = src;
     overlay.classList.remove("is-hidden");
-    img.onload = () => {
+    let initialized = false;
+    const init = () => {
+      if (initialized) return;
+      initialized = true;
       resetLightboxView();
       if (frames && frames.length) startLightboxSequence(frames, state.sequenceFps || 30);
     };
-    if (img.complete && img.naturalWidth) {
-      resetLightboxView();
-      if (frames && frames.length) startLightboxSequence(frames, state.sequenceFps || 30);
-    }
+    img.onload = () => {
+      img.onload = null;
+      init();
+    };
+    img.src = src;
+    if (img.complete && img.naturalWidth) init();
   }
 
   function closeLightbox() {

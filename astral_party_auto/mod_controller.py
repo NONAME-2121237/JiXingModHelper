@@ -95,8 +95,9 @@ class ModController:
         # 角色标注：bundle 级 + 资源级覆盖
         self._bundle_labels: dict[str, str] = {}
         self._resource_labels: dict[str, dict[str, str]] = {}
-        self._load_character_labels()
         DATA_DIR.mkdir(parents=True, exist_ok=True)
+        self._load_character_labels()
+        self._prune_character_labels()
         PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
         MADE_DIR.mkdir(parents=True, exist_ok=True)
         self._load_draft()
@@ -1331,6 +1332,28 @@ class ModController:
                     for bundle, names in resources.items()
                     if isinstance(names, dict)
                 }
+
+    def _prune_character_labels(self) -> None:
+        """移除已从角色表删除的角色对应的标注，避免下拉里找不到却仍残留。"""
+        valid = set(self.character_list())
+        changed = False
+
+        for bundle in list(self._bundle_labels):
+            if self._bundle_labels[bundle] not in valid:
+                del self._bundle_labels[bundle]
+                changed = True
+
+        for bundle in list(self._resource_labels):
+            resource_map = self._resource_labels[bundle]
+            for name in list(resource_map):
+                if resource_map[name] not in valid:
+                    del resource_map[name]
+                    changed = True
+            if not resource_map:
+                del self._resource_labels[bundle]
+
+        if changed:
+            self._save_character_labels()
 
     def _save_character_labels(self) -> None:
         CHARACTER_LABELS_PATH.parent.mkdir(parents=True, exist_ok=True)
