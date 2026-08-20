@@ -26,6 +26,15 @@ from .categories import (
     describe_selection,
     filter_by_category,
 )
+from .dynamic import (
+    DYNAMIC_KIND_LABELS,
+    SEQUENCE_MIN_FRAMES,
+    SequenceGroup,
+    classify_text_asset,
+    find_sequence_preview_texture,
+    sequence_groups_from_names,
+    text_asset_bytes,
+)
 from .export_assets import default_export_name, export_by_type
 from .maker import (
     decode_text_asset_raw,
@@ -62,6 +71,13 @@ __all__ = [
     "count_by_category",
     "describe_selection",
     "filter_by_category",
+    "DYNAMIC_KIND_LABELS",
+    "SEQUENCE_MIN_FRAMES",
+    "SequenceGroup",
+    "classify_text_asset",
+    "find_sequence_preview_texture",
+    "sequence_groups_from_names",
+    "text_asset_bytes",
     "default_export_name",
     "decode_text_asset_raw",
     "export_by_type",

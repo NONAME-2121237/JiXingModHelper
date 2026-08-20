@@ -15,16 +15,19 @@ from typing import Callable
 from .core.config import APP_ROOT
 from .core.detector import find_game_install, launch_direct, launch_with_steam
 from .modkit import (
+    DYNAMIC_KIND_LABELS,
     ModManager,
     all_categories,
     bundle_dirs_for_exe,
     bundle_source_key,
     build_asset_index,
+    classify_text_asset,
     default_export_name,
     export_by_type,
     export_mod_pack,
     extract_texture_png,
     find_anim_preview_texture,
+    find_sequence_preview_texture,
     list_text_assets,
     load_asset_index,
     read_text_asset,
@@ -32,6 +35,8 @@ from .modkit import (
     replace_bundle_text,
     replace_bundle_texture,
     replace_bundle_texture_from_bundle,
+    sequence_groups_from_names,
+    text_asset_bytes,
 )
 from .modkit.bundles import iter_bundle_entries, read_bundle_asset_names
 from .modkit.categories import (
@@ -65,12 +70,13 @@ class ModController:
         self.manager: ModManager | None = None
         self._pending_extract_dir: Path | None = None
         self._pending_extract_source: Path | None = None
-        # 多类型索引：texture/text/mesh/anim → {bundle: [names]}
+        # 多类型索引：texture/text/mesh/anim/dynamic → {bundle: [names]}
         self.typed_index: dict[str, dict[str, list[str]]] = {
             "texture": {},
             "text": {},
             "mesh": {},
             "anim": {},
+            "dynamic": {},
         }
         self._index_source_key = ""
         self._category_cache_lock = threading.Lock()
@@ -177,7 +183,7 @@ class ModController:
             if self.aa_dirs:
                 self.typed_index = load_asset_index(INDEX_CACHE, self.aa_dirs)
             else:
-                self.typed_index = {"texture": {}, "text": {}, "mesh": {}, "anim": {}}
+                self.typed_index = {"texture": {}, "text": {}, "mesh": {}, "anim": {}, "dynamic": {}}
             self._category_cache_source = None
             self._category_rows = {}
             self._category_counts = {}
@@ -534,6 +540,104 @@ class ModController:
                     f"AnimationClip · 预览 {preview_tex}" if preview_tex else "AnimationClip · 无预览贴图"
                 ),
                 "caption": f"动画 · {asset_name}" + (f" · 预览 {preview_tex}" if preview_tex else ""),
+            }
+            return self.selection
+
+        if asset_type == "dynamic":
+            # 用与索引一致的贴图名集合（Texture2D + Sprite，已去重）
+            names_by_type = read_bundle_asset_names(path)
+            texture_names = names_by_type.get("texture") or []
+            groups = [
+                group for group in sequence_groups_from_names(texture_names)
+                if group.base == asset_name
+            ]
+            if groups:
+                group = groups[0]
+                preview_tex = find_sequence_preview_texture(texture_names, asset_name)
+                png = info = None
+                if preview_tex:
+                    png, info = self.preview_bundle(path, preview_tex, tag="dynseq")
+                self.selection = {
+                    "kind": "dynamic",
+                    "asset_type": "dynamic",
+                    "bundle": bundle_name,
+                    "bundle_path": str(game_path or path),
+                    "original_path": str(path),
+                    "name": asset_name,
+                    "preview_texture": preview_tex or "",
+                    "width": info.width if info else 0,
+                    "height": info.height if info else 0,
+                    "preview": str(png) if png else "",
+                    "text_preview": (
+                        f"序列帧动画组：{asset_name}\n"
+                        f"帧数：{group.frame_count}（{group.min_index}~{group.max_index}）\n"
+                        f"示例帧：{', '.join(group.examples)}\n"
+                        "游戏内表现为连续播放的 2D 动态图片。"
+                    ),
+                    "category": "all",
+                    "category_label": "动态图像",
+                    "category_desc": "序列帧动画组 · 一张张连续播放的 2D 动态图片",
+                    "caption": f"动态图像 · {asset_name}（{group.frame_count}帧）",
+                }
+                return self.selection
+
+            # 非序列帧：可能是视频 / Live2D / Spine / GIF / FairyGUI
+            import UnityPy
+
+            env = UnityPy.load(str(path))
+            kind_label = "动态图像"
+            kind_desc = "动态 2D 资源"
+            text_preview = f"动态资源：{asset_name}\n未找到对应对象的具体类型，可尝试刷新索引。"
+            for obj in env.objects:
+                if obj.type.name in ("VideoClip", "VideoPlayer", "MovieTexture"):
+                    try:
+                        data = obj.read()
+                    except Exception:
+                        continue
+                    name = str(getattr(data, "m_Name", "") or "")
+                    if name == asset_name:
+                        kind_label = "视频"
+                        kind_desc = "VideoClip / VideoPlayer · 动态视频资源"
+                        text_preview = f"视频资源：{asset_name}\n可通过导出原始资源进一步查看。"
+                        break
+                elif obj.type.name == "TextAsset":
+                    try:
+                        data = obj.read()
+                    except Exception:
+                        continue
+                    name = str(getattr(data, "m_Name", "") or "")
+                    if name != asset_name:
+                        continue
+                    raw = text_asset_bytes(data)
+                    dyn_kind = classify_text_asset(name, raw)
+                    if dyn_kind:
+                        kind_label = DYNAMIC_KIND_LABELS.get(dyn_kind, dyn_kind)
+                        kind_desc = f"{kind_label} · TextAsset 动态资源"
+                        text_preview = (
+                            f"动态资源类型：{kind_label}\n"
+                            f"资源名：{asset_name}\n"
+                            f"原始大小：{len(raw)} 字节"
+                        )
+                        if dyn_kind == "fairygui":
+                            text_preview += "\n这是 FairyGUI 界面包，游戏内动态 UI 图通常由它引用序列帧贴图实现。"
+                        break
+
+            self.selection = {
+                "kind": "dynamic",
+                "asset_type": "dynamic",
+                "bundle": bundle_name,
+                "bundle_path": str(game_path or path),
+                "original_path": str(path),
+                "name": asset_name,
+                "preview_texture": "",
+                "width": 0,
+                "height": 0,
+                "preview": "",
+                "text_preview": text_preview,
+                "category": "all",
+                "category_label": kind_label,
+                "category_desc": kind_desc,
+                "caption": f"{kind_label} · {asset_name}",
             }
             return self.selection
 

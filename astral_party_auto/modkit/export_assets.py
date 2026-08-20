@@ -9,6 +9,11 @@ import UnityPy
 from PIL import Image
 
 from .bundles import extract_texture_png
+from .dynamic import (
+    find_sequence_preview_texture,
+    sequence_groups_from_names,
+    text_asset_bytes,
+)
 
 
 def _safe_stem(name: str) -> str:
@@ -202,8 +207,80 @@ def default_export_name(asset_type: str, asset_name: str) -> str:
         "text": ".txt",
         "mesh": ".obj",
         "anim": ".json",
+        "dynamic": ".png",
     }.get(asset_type, ".bin")
     return stem + ext
+
+
+def export_dynamic(
+    bundle_path: str | Path,
+    asset_name: str,
+    dest: str | Path,
+) -> Path:
+    """导出动态 2D 资源：序列帧优先导出第一帧 PNG，否则导出原始字节。"""
+    env = UnityPy.load(str(bundle_path))
+    texture_names: list[str] = []
+    for obj in env.objects:
+        if obj.type.name not in ("Texture2D", "Sprite"):
+            continue
+        try:
+            data = obj.read()
+        except Exception:
+            continue
+        name = str(getattr(data, "m_Name", "") or "")
+        if name:
+            texture_names.append(name)
+
+    # 序列帧：导出第一帧 PNG
+    if any(group.base == asset_name for group in sequence_groups_from_names(texture_names)):
+        preview = find_sequence_preview_texture(texture_names, asset_name)
+        if preview:
+            out = Path(dest)
+            if out.suffix.lower() != ".png":
+                out = out.with_suffix(".png")
+            info = extract_texture_png(bundle_path, out, target_name=preview)
+            if info:
+                return out
+
+    # TextAsset / 视频：导出原始字节
+    for obj in env.objects:
+        if obj.type.name == "TextAsset":
+            try:
+                data = obj.read()
+            except Exception:
+                continue
+            name = str(getattr(data, "m_Name", "") or "")
+            if name != asset_name:
+                continue
+            raw = text_asset_bytes(data)
+            out = Path(dest)
+            if out.suffix.lower() not in (".bin", ".bytes", ".json", ".txt"):
+                out = out.with_suffix(".bin")
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_bytes(raw)
+            return out
+        if obj.type.name in ("VideoClip", "VideoPlayer", "MovieTexture"):
+            try:
+                data = obj.read()
+            except Exception:
+                continue
+            name = str(getattr(data, "m_Name", "") or "")
+            if name != asset_name:
+                continue
+            out = Path(dest)
+            if out.suffix.lower() not in (".bin", ".bytes"):
+                out = out.with_suffix(".bin")
+            out.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                raw = obj.get_raw_data() or b""
+            except Exception:
+                raw = b""
+            if not raw:
+                raise RuntimeError(f"无法读取视频原始字节：{asset_name}")
+            out.write_bytes(raw)
+            return out
+
+    raise RuntimeError(f"找不到可导出的动态资源：{asset_name}")
 
 
 def export_by_type(
@@ -222,4 +299,6 @@ def export_by_type(
         return export_mesh(bundle_path, asset_name, dest)
     if asset_type == "anim":
         return export_animation(bundle_path, asset_name, dest)
+    if asset_type == "dynamic":
+        return export_dynamic(bundle_path, asset_name, dest)
     raise RuntimeError(f"不支持导出类型：{asset_type}")

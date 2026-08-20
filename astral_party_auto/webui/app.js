@@ -16,6 +16,7 @@
     text: "可读配置/文案。FairyGUI 二进制已过滤。",
     mesh: "3D 三角面模型，只导出不替换。",
     anim: "Unity 动画片段。预览为同包第一帧/图集，可换图或 .animbin。",
+    dynamic: "动态 2D 图像：序列帧、视频、Live2D/GIF/FairyGUI 等。",
   };
 
   const state = {
@@ -287,6 +288,7 @@
       { id: "text", label: "文本" },
       { id: "mesh", label: "3D模型" },
       { id: "anim", label: "动画" },
+      { id: "dynamic", label: "动态图像" },
     ]).forEach((t) => {
       const opt = document.createElement("option");
       opt.value = t.id;
@@ -426,7 +428,7 @@
         media.innerHTML = "<span>无可视预览</span>";
       }
     }
-    if (go) go.disabled = (sel.asset_type || sel.kind) === "mesh";
+    if (go) go.disabled = ["mesh", "dynamic"].includes(sel.asset_type || sel.kind);
     updateExportButtons();
   }
 
@@ -456,6 +458,9 @@
     } else if (kind === "anim") {
       a.textContent = "导出 JSON";
       b.textContent = "导出二进制";
+    } else if (kind === "dynamic") {
+      a.textContent = "导出";
+      b.textContent = "导出";
     } else {
       a.textContent = "导出";
       b.textContent = "导出";
@@ -499,6 +504,13 @@
       cropBtn?.classList.add("is-hidden");
       setMedia($("#studio-original"), null, "3D 模型仅导出");
       setMedia($("#studio-replacement"), null, "不支持替换");
+    } else if (kind === "dynamic") {
+      imageMode.classList.remove("is-hidden");
+      textMode.classList.add("is-hidden");
+      chooseBtn.classList.add("is-hidden");
+      cropBtn?.classList.add("is-hidden");
+      setMedia($("#studio-original"), sel.preview_data, "无预览图");
+      setMedia($("#studio-replacement"), null, "动态资源当前仅支持浏览/导出");
     } else {
       imageMode.classList.remove("is-hidden");
       textMode.classList.add("is-hidden");
