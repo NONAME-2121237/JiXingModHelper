@@ -152,6 +152,11 @@ def sequence_groups_from_names(
     return groups
 
 
+def sorted_sequence_names(names: Iterable[str]) -> list[str]:
+    """按帧号升序排列序列帧名。"""
+    return sorted(names, key=lambda name: int(_frame_index(name)))
+
+
 def find_sequence_preview_texture(
     texture_names: Sequence[str],
     base_name: str,

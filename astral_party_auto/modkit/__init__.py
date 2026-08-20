@@ -33,6 +33,7 @@ from .dynamic import (
     classify_text_asset,
     find_sequence_preview_texture,
     sequence_groups_from_names,
+    sorted_sequence_names,
     text_asset_bytes,
 )
 from .export_assets import default_export_name, export_by_type
@@ -77,6 +78,7 @@ __all__ = [
     "classify_text_asset",
     "find_sequence_preview_texture",
     "sequence_groups_from_names",
+    "sorted_sequence_names",
     "text_asset_bytes",
     "default_export_name",
     "decode_text_asset_raw",

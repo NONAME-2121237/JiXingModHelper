@@ -426,13 +426,84 @@ class DesktopApi:
         ]
 
     @exposed
-    def browse_assets(self, asset_type: str, category_id: str, query: str = "") -> list[dict]:
-        limit = 500 if asset_type == "texture" else 200
-        rows = self.controller.browse(category_id, query, limit=limit, asset_type=asset_type)
+    def browse_assets(
+        self,
+        asset_type: str,
+        category_id: str,
+        query: str = "",
+        character: str = "",
+    ) -> list[dict]:
+        limit = 1000 if asset_type == "texture" else 500
+        rows = self.controller.browse_labelled(
+            category_id,
+            query,
+            limit=limit,
+            asset_type=asset_type,
+            character=character,
+        )
         return [
-            {"bundle": bundle, "name": name, "duplicates": duplicates}
-            for bundle, name, duplicates in dedupe_by_texture_name(rows)
+            {"bundle": bundle, "name": name, "character": char}
+            for bundle, name, char in rows
         ]
+
+    @exposed
+    def get_sequence_frames(self, bundle: str, name: str) -> dict:
+        from astral_party_auto.modkit.bundles import read_bundle_asset_names
+        from astral_party_auto.modkit.dynamic import (
+            sequence_groups_from_names,
+            sorted_sequence_names,
+        )
+
+        path = self.controller.original_bundle_path(bundle)
+        if not path:
+            raise RuntimeError(f"找不到资源包：{bundle}")
+        names_by_type = read_bundle_asset_names(path)
+        texture_names = names_by_type.get("texture") or []
+        groups = [
+            group for group in sequence_groups_from_names(texture_names)
+            if group.base == name
+        ]
+        if not groups:
+            raise RuntimeError("该资源不是序列帧动画组。")
+        group = groups[0]
+        frame_names = sorted_sequence_names(group.names)[:120]
+        frames = []
+        width = height = 0
+        for frame_name in frame_names:
+            png, info = self.controller.preview_bundle(
+                path,
+                frame_name,
+                tag=f"seqframe_{bundle[:16]}",
+            )
+            if png:
+                frames.append(self._image_data(png))
+                if info:
+                    width, height = info.width, info.height
+        return {
+            "frames": frames,
+            "names": frame_names,
+            "fps": 30,
+            "width": width,
+            "height": height,
+            "total": group.frame_count,
+            "truncated": group.frame_count > len(frame_names),
+        }
+
+    @exposed
+    def get_character_list(self) -> list[str]:
+        return self.controller.character_list()
+
+    @exposed
+    def get_character_labels(self) -> dict:
+        return self.controller.character_labels()
+
+    @exposed
+    def set_resource_character(self, bundle: str, name: str, character: str) -> dict:
+        return self.controller.set_resource_character(bundle, name, character)
+
+    @exposed
+    def set_bundle_character(self, bundle: str, character: str) -> dict:
+        return self.controller.set_bundle_character(bundle, character)
 
     @exposed
     def select_asset(self, asset_type: str, bundle: str, name: str) -> dict:

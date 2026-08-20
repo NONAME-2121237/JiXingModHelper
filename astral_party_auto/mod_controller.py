@@ -12,6 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
+from .core.characters import load_character_list
 from .core.config import APP_ROOT
 from .core.detector import find_game_install, launch_direct, launch_with_steam
 from .modkit import (
@@ -36,6 +37,7 @@ from .modkit import (
     replace_bundle_texture,
     replace_bundle_texture_from_bundle,
     sequence_groups_from_names,
+    sorted_sequence_names,
     text_asset_bytes,
 )
 from .modkit.bundles import iter_bundle_entries, read_bundle_asset_names
@@ -53,6 +55,7 @@ INDEX_CACHE = DATA_DIR / "texture_index.json"
 PREVIEW_DIR = DATA_DIR / "previews"
 MADE_DIR = APP_ROOT / "made_mods"
 DRAFT_META = DATA_DIR / "draft_pack.json"
+CHARACTER_LABELS_PATH = DATA_DIR / "character_labels.json"
 
 SEVENZIP_CANDIDATES = [
     Path(r"C:\Program Files\7-Zip\7z.exe"),
@@ -89,6 +92,10 @@ class ModController:
         self.draft_name: str = "我的Mod套装"
         # 当前在「浏览」里选中的资源，供「制作」页使用
         self.selection: dict | None = None
+        # 角色标注：bundle 级 + 资源级覆盖
+        self._bundle_labels: dict[str, str] = {}
+        self._resource_labels: dict[str, dict[str, str]] = {}
+        self._load_character_labels()
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
         MADE_DIR.mkdir(parents=True, exist_ok=True)
@@ -394,6 +401,78 @@ class ModController:
         out.sort(key=lambda x: x[1].lower())
         return out
 
+    def _iter_browse_rows(
+        self,
+        asset_type: str,
+        cat_id: str,
+        query: str,
+    ):
+        """按 bundle -> 资源名排序地产生 (bundle, name)。"""
+        q = (query or "").strip().lower()
+        if asset_type == "texture" and cat_id not in ("all", ""):
+            rows = self._ensure_texture_category_cache().get(cat_id, ())
+            for bundle, name in sorted(rows, key=lambda x: (x[0].lower(), x[1].lower())):
+                if q and q not in name.lower() and q not in bundle.lower():
+                    continue
+                yield bundle, name
+            return
+
+        block = self.typed_index.get(asset_type) or {}
+        for bundle in sorted(block.keys(), key=str.lower):
+            names = block[bundle]
+            for name in sorted(names, key=str.lower):
+                if asset_type == "text" and (
+                    name.endswith("_fui") or name.endswith("fui") or name.startswith("FGUI")
+                ):
+                    continue
+                if q and q not in name.lower() and q not in bundle.lower():
+                    continue
+                yield bundle, name
+
+    def browse_labelled(
+        self,
+        cat_id: str = "all",
+        query: str = "",
+        limit: int = 500,
+        *,
+        asset_type: str = "texture",
+        character: str = "",
+    ) -> list[tuple[str, str, str]]:
+        """返回 (bundle, name, character)，未标注在前、已标注在后，均按 bundle/name 排序。"""
+        char_filter = (character or "").strip()
+        out: list[tuple[str, str, str]] = []
+
+        def matches(eff: str) -> bool:
+            if char_filter == "__unmarked":
+                return not eff
+            if char_filter:
+                return eff == char_filter
+            return True
+
+        # 第一遍：未标注角色
+        for bundle, name in self._iter_browse_rows(asset_type, cat_id, query):
+            eff = self.effective_character(bundle, name)
+            if eff:
+                continue
+            if not matches(eff):
+                continue
+            out.append((bundle, name, eff))
+            if len(out) >= limit:
+                return out
+
+        # 第二遍：已标注角色
+        for bundle, name in self._iter_browse_rows(asset_type, cat_id, query):
+            eff = self.effective_character(bundle, name)
+            if not eff:
+                continue
+            if not matches(eff):
+                continue
+            out.append((bundle, name, eff))
+            if len(out) >= limit:
+                return out
+
+        return out
+
     def preview_bundle(
         self,
         bundle_path: str | Path,
@@ -557,6 +636,7 @@ class ModController:
                 png = info = None
                 if preview_tex:
                     png, info = self.preview_bundle(path, preview_tex, tag="dynseq")
+                frame_names = sorted_sequence_names(group.names)
                 self.selection = {
                     "kind": "dynamic",
                     "asset_type": "dynamic",
@@ -565,6 +645,8 @@ class ModController:
                     "original_path": str(path),
                     "name": asset_name,
                     "preview_texture": preview_tex or "",
+                    "frame_names": frame_names,
+                    "fps": 30,
                     "width": info.width if info else 0,
                     "height": info.height if info else 0,
                     "preview": str(png) if png else "",
@@ -572,12 +654,12 @@ class ModController:
                         f"序列帧动画组：{asset_name}\n"
                         f"帧数：{group.frame_count}（{group.min_index}~{group.max_index}）\n"
                         f"示例帧：{', '.join(group.examples)}\n"
-                        "游戏内表现为连续播放的 2D 动态图片。"
+                        "游戏内表现为连续播放的 2D 动态图片，预览按 30fps 播放。"
                     ),
                     "category": "all",
                     "category_label": "动态图像",
                     "category_desc": "序列帧动画组 · 一张张连续播放的 2D 动态图片",
-                    "caption": f"动态图像 · {asset_name}（{group.frame_count}帧）",
+                    "caption": f"动态图像 · {asset_name}（{group.frame_count}帧 · 30fps）",
                 }
                 return self.selection
 
@@ -1213,6 +1295,79 @@ class ModController:
     @property
     def index_ready(self) -> bool:
         return any(bool(block) for block in self.typed_index.values())
+
+    # ---------- 角色标注 ----------
+    def character_list(self) -> list[str]:
+        return load_character_list()
+
+    def character_labels(self) -> dict:
+        return {
+            "bundles": dict(self._bundle_labels),
+            "resources": {
+                bundle: dict(names)
+                for bundle, names in self._resource_labels.items()
+            },
+        }
+
+    def _load_character_labels(self) -> None:
+        try:
+            data = json.loads(CHARACTER_LABELS_PATH.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return
+        if isinstance(data, dict):
+            bundles = data.get("bundles")
+            resources = data.get("resources")
+            if isinstance(bundles, dict):
+                self._bundle_labels = {
+                    str(k): str(v) for k, v in bundles.items() if str(v).strip()
+                }
+            if isinstance(resources, dict):
+                self._resource_labels = {
+                    str(bundle): {
+                        str(name): str(char)
+                        for name, char in names.items()
+                        if str(char).strip()
+                    }
+                    for bundle, names in resources.items()
+                    if isinstance(names, dict)
+                }
+
+    def _save_character_labels(self) -> None:
+        CHARACTER_LABELS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "bundles": self._bundle_labels,
+            "resources": self._resource_labels,
+        }
+        CHARACTER_LABELS_PATH.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+    def set_resource_character(self, bundle: str, name: str, character: str) -> dict:
+        character = (character or "").strip()
+        if character:
+            self._resource_labels.setdefault(str(bundle), {})[str(name)] = character
+        else:
+            self._resource_labels.get(str(bundle), {}).pop(str(name), None)
+        self._save_character_labels()
+        return self.character_labels()
+
+    def set_bundle_character(self, bundle: str, character: str) -> dict:
+        character = (character or "").strip()
+        if character:
+            self._bundle_labels[str(bundle)] = character
+        else:
+            self._bundle_labels.pop(str(bundle), None)
+        self._save_character_labels()
+        return self.character_labels()
+
+    def effective_character(self, bundle: str, name: str) -> str:
+        resource_map = self._resource_labels.get(str(bundle))
+        if resource_map:
+            value = resource_map.get(str(name))
+            if value:
+                return value
+        return self._bundle_labels.get(str(bundle), "")
 
     # ---------- 内部 ----------
     def _require_game(self) -> None:

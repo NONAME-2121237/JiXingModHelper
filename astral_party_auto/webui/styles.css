@@ -682,6 +682,27 @@ input {
   min-width: 120px;
 }
 
+.search-row select {
+  flex: 0 0 130px;
+  min-width: 110px;
+}
+
+.character-label-box {
+  display: grid;
+  gap: 7px;
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel-soft);
+}
+
+.character-label-box label {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
 .list-meta {
   display: flex;
   gap: 12px;
@@ -721,6 +742,34 @@ input {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+
+.resource-item .resource-main {
+  display: grid;
+  min-width: 0;
+}
+
+.resource-item .resource-bundle {
+  display: block;
+  color: var(--soft);
+  font-size: 9px;
+  line-height: 1.2;
+}
+
+.resource-item .resource-name {
+  display: block;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.resource-item .character-badge {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding: 2px 7px;
+  border-radius: 999px;
+  color: #fff;
+  background: var(--purple);
+  font-size: 9px;
 }
 
 .resource-item small {

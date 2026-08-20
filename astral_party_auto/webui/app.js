@@ -31,6 +31,9 @@
     resources: [],
     resourcePage: 0,
     query: "",
+    characterFilter: "",
+    characterList: [],
+    characterLabels: { bundles: {}, resources: {} },
     selection: null,
     draftIndex: -1,
     pendingMod: null,
@@ -39,6 +42,10 @@
     modBundles: [],
     modBundleActive: "",
     modPreviewTitle: "",
+    sequenceFrames: [],
+    sequenceTimer: null,
+    lightboxFrames: [],
+    lightboxSequenceTimer: null,
     lightbox: {
       scale: 1,
       tx: 0,
@@ -300,11 +307,49 @@
     if (hint) hint.textContent = TYPE_HINTS[state.assetType] || "";
   }
 
+  function fillCharacterFilter() {
+    const sel = $("#character-filter");
+    if (!sel) return;
+    const current = state.characterFilter || "";
+    const options = ['<option value="">全部</option>', '<option value="__unmarked">未标注</option>'];
+    (state.characterList || []).forEach((c) => {
+      options.push(`<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`);
+    });
+    sel.innerHTML = options.join("");
+    sel.value = current;
+  }
+
+  function fillResourceCharacterSelect() {
+    const sel = $("#resource-character");
+    if (!sel) return;
+    const current = sel.value || "";
+    const options = ['<option value="">未标注</option>'];
+    (state.characterList || []).forEach((c) => {
+      options.push(`<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`);
+    });
+    sel.innerHTML = options.join("");
+    if (current && (state.characterList || []).includes(current)) sel.value = current;
+  }
+
+  function effectiveCharacter(bundle, name) {
+    const res = state.characterLabels?.resources?.[bundle]?.[name];
+    if (res) return res;
+    return state.characterLabels?.bundles?.[bundle] || "";
+  }
+
   async function refreshBrowse() {
     fillAssetTypes();
     try {
-      const cats = await call("get_categories", { quiet: true }, state.assetType);
+      const [cats, charList, labels] = await Promise.all([
+        call("get_categories", { quiet: true }, state.assetType),
+        call("get_character_list", { quiet: true }),
+        call("get_character_labels", { quiet: true }),
+      ]);
       state.categories = cats || [];
+      state.characterList = charList || [];
+      state.characterLabels = labels || { bundles: {}, resources: {} };
+      fillCharacterFilter();
+      fillResourceCharacterSelect();
       if (!state.categories.some((c) => c.id === state.categoryId)) {
         state.categoryId = state.categories[0]?.id || "all";
       }
@@ -347,7 +392,8 @@
         { quiet: true },
         state.assetType,
         state.categoryId,
-        state.query || ""
+        state.query || "",
+        state.characterFilter || ""
       );
       state.resources = rows || [];
       if (!state.resources.length) {
@@ -375,7 +421,7 @@
     state.resourcePage = Math.min(state.resourcePage, pages - 1);
     const start = state.resourcePage * PAGE_SIZE;
     const chunk = state.resources.slice(start, start + PAGE_SIZE);
-    if (status) status.textContent = total ? `已加载 ${total} 条（同名已合并）` : "没有匹配";
+    if (status) status.textContent = total ? `已加载 ${total} 条（按 Bundle 排序）` : "没有匹配";
     if (pageLabel) pageLabel.textContent = total ? `第 ${state.resourcePage + 1}/${pages} 页` : "";
     if (!chunk.length) {
       list.innerHTML = `<div class="notice">没有匹配的资源。</div>`;
@@ -387,8 +433,15 @@
       const item = document.createElement("button");
       item.type = "button";
       item.className = "resource-item" + (key === selKey ? " is-active" : "");
-      const label = row.duplicates > 1 ? `${row.name}  ×${row.duplicates}包` : row.name;
-      item.innerHTML = `<span>${escapeHtml(label)}</span>`;
+      const char = row.character || effectiveCharacter(row.bundle, row.name);
+      const badge = char ? `<span class="character-badge">${escapeHtml(char)}</span>` : "";
+      item.innerHTML = `
+        <span class="resource-main">
+          <span class="resource-bundle">${escapeHtml(row.bundle)}</span>
+          <span class="resource-name">${escapeHtml(row.name)}</span>
+        </span>
+        ${badge}
+      `;
       item.addEventListener("click", () => selectResource(row.bundle, row.name));
       list.appendChild(item);
     });
@@ -398,9 +451,23 @@
     try {
       const sel = await call("select_asset", { busy: true, busyText: "加载预览…" }, state.assetType, bundle, name);
       state.selection = sel;
+      if (sel.asset_type === "dynamic" && sel.frame_names && sel.frame_names.length) {
+        const seq = await call("get_sequence_frames", { quiet: true }, bundle, name);
+        state.sequenceFrames = (seq && seq.frames) || [];
+        state.sequenceFps = (seq && seq.fps) || 30;
+      } else {
+        state.sequenceFrames = [];
+        state.sequenceFps = 30;
+      }
       renderPreview();
       renderResources();
       updateExportButtons();
+      fillResourceCharacterSelect();
+      const eff = effectiveCharacter(bundle, name);
+      const charSel = $("#resource-character");
+      if (charSel) charSel.value = eff || "";
+      $("#apply-resource-character").disabled = false;
+      $("#apply-bundle-character").disabled = false;
     } catch (_) {}
   }
 
@@ -415,16 +482,28 @@
       if (desc) desc.textContent = "点中间列表的一项";
       if (media) media.innerHTML = "<span>等待选择</span>";
       if (go) go.disabled = true;
+      stopSequencePreview();
+      state.sequenceFrames = [];
+      $("#apply-resource-character").disabled = true;
+      $("#apply-bundle-character").disabled = true;
       return;
     }
     if (title) title.textContent = sel.caption || sel.name || "资源";
     if (desc) desc.textContent = sel.category_desc || "";
     if (media) {
-      if (sel.preview_data) {
+      const isSeq = sel.asset_type === "dynamic" && state.sequenceFrames.length;
+      if (isSeq) {
+        media.innerHTML = `<img src="${state.sequenceFrames[0]}" alt="preview">`;
+        const img = media.querySelector("img");
+        startSequencePreview(img, state.sequenceFrames, state.sequenceFps || 30);
+      } else if (sel.preview_data) {
+        stopSequencePreview();
         media.innerHTML = `<img src="${sel.preview_data}" alt="preview">`;
       } else if (sel.text_preview) {
+        stopSequencePreview();
         media.innerHTML = `<pre>${escapeHtml(sel.text_preview)}</pre>`;
       } else {
+        stopSequencePreview();
         media.innerHTML = "<span>无可视预览</span>";
       }
     }
@@ -534,7 +613,7 @@
     else el.innerHTML = `<span>${escapeHtml(fallback || "—")}</span>`;
   }
 
-  function openLightbox(src, title) {
+  function openLightbox(src, title, frames) {
     const overlay = $("#lightbox-overlay");
     const img = $("#lightbox-image");
     const titleEl = $("#lightbox-title");
@@ -546,8 +625,14 @@
     if (titleEl) titleEl.textContent = title || "图片预览";
     img.src = src;
     overlay.classList.remove("is-hidden");
-    img.onload = () => resetLightboxView();
-    if (img.complete && img.naturalWidth) resetLightboxView();
+    img.onload = () => {
+      resetLightboxView();
+      if (frames && frames.length) startLightboxSequence(frames, state.sequenceFps || 30);
+    };
+    if (img.complete && img.naturalWidth) {
+      resetLightboxView();
+      if (frames && frames.length) startLightboxSequence(frames, state.sequenceFps || 30);
+    }
   }
 
   function closeLightbox() {
@@ -556,6 +641,7 @@
     const stage = $("#lightbox-stage");
     if (!overlay) return;
     overlay.classList.add("is-hidden");
+    stopLightboxSequence();
     if (img) img.src = "";
     if (stage) stage.classList.remove("dragging");
     state.lightbox.dragging = false;
@@ -575,6 +661,9 @@
     state.lightbox.scale = Math.max(0.1, fit || 1);
     state.lightbox.tx = (rect.width - img.naturalWidth * state.lightbox.scale) / 2;
     state.lightbox.ty = (rect.height - img.naturalHeight * state.lightbox.scale) / 2;
+    // 固定图片布局尺寸，切换序列帧时保持缩放/平移对齐
+    img.style.width = img.naturalWidth + "px";
+    img.style.height = img.naturalHeight + "px";
     applyLightboxTransform();
   }
 
@@ -628,6 +717,47 @@
     state.lightbox.dragging = false;
     const stage = $("#lightbox-stage");
     if (stage) stage.classList.remove("dragging");
+  }
+
+  function stopSequencePreview() {
+    if (state.sequenceTimer) {
+      clearInterval(state.sequenceTimer);
+      state.sequenceTimer = null;
+    }
+  }
+
+  function stopLightboxSequence() {
+    if (state.lightboxSequenceTimer) {
+      clearInterval(state.lightboxSequenceTimer);
+      state.lightboxSequenceTimer = null;
+    }
+    state.lightboxFrames = [];
+  }
+
+  function startSequencePreview(img, frames, fps) {
+    stopSequencePreview();
+    if (!img || !frames || !frames.length) return;
+    let index = 0;
+    img.src = frames[0];
+    const interval = Math.max(33, Math.round(1000 / (fps || 30)));
+    state.sequenceTimer = setInterval(() => {
+      index = (index + 1) % frames.length;
+      img.src = frames[index];
+    }, interval);
+  }
+
+  function startLightboxSequence(frames, fps) {
+    stopLightboxSequence();
+    const img = $("#lightbox-image");
+    if (!img || !frames || !frames.length) return;
+    state.lightboxFrames = frames;
+    let index = 0;
+    img.src = frames[0];
+    const interval = Math.max(33, Math.round(1000 / (fps || 30)));
+    state.lightboxSequenceTimer = setInterval(() => {
+      index = (index + 1) % frames.length;
+      img.src = frames[index];
+    }, interval);
   }
 
   function renderDraftList() {
@@ -736,7 +866,9 @@
     document.addEventListener("click", (e) => {
       const img = e.target.closest(".preview-media img");
       if (img && img.src) {
-        openLightbox(img.src, img.alt || "图片预览");
+        const isBrowsePreview = img.closest("#preview-media") !== null;
+        const frames = isBrowsePreview && state.sequenceFrames.length ? state.sequenceFrames : null;
+        openLightbox(img.src, img.alt || "图片预览", frames);
       }
     });
 
@@ -772,6 +904,31 @@
       state.query = $("#resource-search").value.trim();
       state.resourcePage = 0;
       loadResources();
+    });
+    $("#character-filter")?.addEventListener("change", (e) => {
+      state.characterFilter = e.target.value;
+      state.resourcePage = 0;
+      loadResources();
+    });
+    $("#apply-resource-character")?.addEventListener("click", async () => {
+      if (!state.selection) return;
+      const char = $("#resource-character")?.value || "";
+      state.characterLabels = await call("set_resource_character", { quiet: true }, state.selection.bundle, state.selection.name, char);
+      fillResourceCharacterSelect();
+      const eff = effectiveCharacter(state.selection.bundle, state.selection.name);
+      const charSel = $("#resource-character");
+      if (charSel) charSel.value = eff || "";
+      await loadResources();
+    });
+    $("#apply-bundle-character")?.addEventListener("click", async () => {
+      if (!state.selection) return;
+      const char = $("#resource-character")?.value || "";
+      state.characterLabels = await call("set_bundle_character", { quiet: true }, state.selection.bundle, char);
+      fillResourceCharacterSelect();
+      const eff = effectiveCharacter(state.selection.bundle, state.selection.name);
+      const charSel = $("#resource-character");
+      if (charSel) charSel.value = eff || "";
+      await loadResources();
     });
     $("#resource-search")?.addEventListener("keydown", (e) => {
       if (e.key === "Enter") {
