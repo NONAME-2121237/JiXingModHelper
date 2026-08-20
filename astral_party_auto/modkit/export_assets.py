@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+import tempfile
 from pathlib import Path
 
 import UnityPy
@@ -12,6 +13,7 @@ from .bundles import extract_texture_png
 from .dynamic import (
     find_sequence_preview_texture,
     sequence_groups_from_names,
+    sorted_sequence_names,
     text_asset_bytes,
 )
 
@@ -212,10 +214,78 @@ def default_export_name(asset_type: str, asset_name: str) -> str:
     return stem + ext
 
 
+def export_sequence_apng(
+    bundle_path: str | Path,
+    asset_name: str,
+    dest: str | Path,
+    *,
+    fps: int = 30,
+) -> Path:
+    """导出序列帧为无损 APNG 动画（30fps 默认）。"""
+    env = UnityPy.load(str(bundle_path))
+    texture_names: list[str] = []
+    for obj in env.objects:
+        if obj.type.name not in ("Texture2D", "Sprite"):
+            continue
+        try:
+            data = obj.read()
+        except Exception:
+            continue
+        name = str(getattr(data, "m_Name", "") or "")
+        if name:
+            texture_names.append(name)
+
+    groups = [
+        group for group in sequence_groups_from_names(texture_names)
+        if group.base == asset_name
+    ]
+    if not groups:
+        raise RuntimeError(f"不是序列帧动画组：{asset_name}")
+    frame_names = sorted_sequence_names(groups[0].names)
+    if not frame_names:
+        raise RuntimeError(f"序列帧组没有可用帧：{asset_name}")
+
+    out = Path(dest)
+    if out.suffix.lower() != ".apng":
+        out = out.with_suffix(".apng")
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    duration = max(1, round(1000 / max(1, fps)))
+    with tempfile.TemporaryDirectory(prefix="apng_") as tmp:
+        tmp_dir = Path(tmp)
+        frame_paths: list[Path] = []
+        for index, frame_name in enumerate(frame_names):
+            frame_png = tmp_dir / f"frame_{index:04d}.png"
+            info = extract_texture_png(bundle_path, frame_png, target_name=frame_name)
+            if info is None:
+                raise RuntimeError(f"无法提取帧：{frame_name}")
+            frame_paths.append(frame_png)
+
+        images = [Image.open(p) for p in frame_paths]
+        try:
+            first = images[0].convert("RGBA")
+            rest = [im.convert("RGBA") for im in images[1:]]
+            first.save(
+                out,
+                format="PNG",
+                save_all=True,
+                append_images=rest,
+                duration=duration,
+                loop=0,
+                disposal=2,
+            )
+        finally:
+            for im in images:
+                im.close()
+    return out
+
+
 def export_dynamic(
     bundle_path: str | Path,
     asset_name: str,
     dest: str | Path,
+    *,
+    fmt: str | None = None,
 ) -> Path:
     """导出动态 2D 资源：序列帧优先导出第一帧 PNG，否则导出原始字节。"""
     env = UnityPy.load(str(bundle_path))
@@ -231,8 +301,10 @@ def export_dynamic(
         if name:
             texture_names.append(name)
 
-    # 序列帧：导出第一帧 PNG
+    # 序列帧：按 fmt 导出 APNG 或第一帧 PNG
     if any(group.base == asset_name for group in sequence_groups_from_names(texture_names)):
+        if (fmt or "").lower() == "apng":
+            return export_sequence_apng(bundle_path, asset_name, dest, fps=30)
         preview = find_sequence_preview_texture(texture_names, asset_name)
         if preview:
             out = Path(dest)
@@ -301,5 +373,5 @@ def export_by_type(
     if asset_type == "anim":
         return export_animation(bundle_path, asset_name, dest)
     if asset_type == "dynamic":
-        return export_dynamic(bundle_path, asset_name, dest)
+        return export_dynamic(bundle_path, asset_name, dest, fmt=fmt)
     raise RuntimeError(f"不支持导出类型：{asset_type}")

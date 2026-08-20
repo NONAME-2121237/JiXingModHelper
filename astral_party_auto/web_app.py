@@ -545,6 +545,13 @@ class DesktopApi:
             default_name = str(Path(default_name).with_suffix(f".{fmt}"))
         elif asset_type == "anim" and variant == "secondary":
             default_name = str(Path(default_name).with_suffix(".animbin"))
+        elif asset_type == "dynamic" and selection.get("frame_names"):
+            if variant == "secondary":
+                fmt = "png"
+                default_name = str(Path(default_name).with_suffix(".png"))
+            else:
+                fmt = "apng"
+                default_name = str(Path(default_name).with_suffix(".apng"))
         file_path = self._pick_path(
             "save",
             save_filename=default_name,

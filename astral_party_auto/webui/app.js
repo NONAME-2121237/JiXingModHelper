@@ -542,8 +542,13 @@
       a.textContent = "导出 JSON";
       b.textContent = "导出二进制";
     } else if (kind === "dynamic") {
-      a.textContent = "导出";
-      b.textContent = "导出";
+      if (sel.frame_names && sel.frame_names.length) {
+        a.textContent = "导出 APNG";
+        b.textContent = "导出首帧 PNG";
+      } else {
+        a.textContent = "导出";
+        b.textContent = "导出";
+      }
     } else {
       a.textContent = "导出";
       b.textContent = "导出";
