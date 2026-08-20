@@ -250,11 +250,12 @@ def export_dynamic(
             except Exception:
                 continue
             name = str(getattr(data, "m_Name", "") or "")
-            if name != asset_name:
+            # FairyGUI 包内组件名使用“包名/组件名”，导出时仍导出整个 fui 包
+            if name != asset_name and not asset_name.startswith(name + "/"):
                 continue
             raw = text_asset_bytes(data)
             out = Path(dest)
-            if out.suffix.lower() not in (".bin", ".bytes", ".json", ".txt"):
+            if out.suffix.lower() not in (".bin", ".bytes", ".json", ".txt", ".fui"):
                 out = out.with_suffix(".bin")
             out.parent.mkdir(parents=True, exist_ok=True)
             out.write_bytes(raw)

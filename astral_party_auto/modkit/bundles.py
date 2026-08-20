@@ -9,7 +9,12 @@ from typing import Callable, Iterable
 
 import UnityPy
 
-from .dynamic import classify_text_asset, sequence_groups_from_names, text_asset_bytes
+from .dynamic import (
+    classify_text_asset,
+    extract_fairygui_dynamic_names,
+    sequence_groups_from_names,
+    text_asset_bytes,
+)
 
 
 # 资源包相对客户端 exe 所在目录的位置
@@ -136,8 +141,8 @@ def read_bundle_asset_names(bundle_path: str | Path) -> dict[str, list[str]]:
         tn = obj.type.name
         kind = _TYPE_MAP.get(tn)
 
-        # 视频类对象不落在 _TYPE_MAP，单独收进 dynamic
-        if tn in ("VideoClip", "VideoPlayer", "MovieTexture"):
+        # 视频 / 动画控制器不落在 _TYPE_MAP，单独收进 dynamic
+        if tn in ("VideoClip", "VideoPlayer", "MovieTexture", "AnimatorController"):
             try:
                 data = obj.read()
             except Exception:
@@ -168,8 +173,20 @@ def read_bundle_asset_names(bundle_path: str | Path) -> dict[str, list[str]]:
             if dynamic_kind and name not in dynamic_seen:
                 dynamic_seen.add(name)
                 out["dynamic"].append(name)
+            # FairyGUI 包内的动效/组件名也作为动态候选，方便找到卡牌、横幅等
+            if dynamic_kind == "fairygui":
+                for item in extract_fairygui_dynamic_names(raw):
+                    full = f"{name}/{item}"
+                    if full not in dynamic_seen:
+                        dynamic_seen.add(full)
+                        out["dynamic"].append(full)
             if is_readable_text_asset(data):
                 out["text"].append(name)
+        elif kind == "anim":
+            out["anim"].append(name)
+            if name not in dynamic_seen:
+                dynamic_seen.add(name)
+                out["dynamic"].append(name)
         else:
             out[kind].append(name)
 

@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.0.16
+
+### 修复
+
+- 修复动态图像扫描不到部分动态卡牌、横幅的问题：
+  - FairyGUI 包（`*_fui`）内的动效/组件名现在也会进入「动态图像」索引；
+  - 例如 `HandCard_fui/effectCardSwitch`、`DisplayCard_fui/CutIn`、`Home_fui/Home_Com_Banner` 等；
+  - 选择这类资源会显示所属 FairyGUI 包和组件说明，导出时仍导出整个 fui 包。
+- 动态图像候选补充 `AnimationClip` 与 `AnimatorController`：
+  - 动画片段和动画控制器也会出现在「动态图像」中，便于发现由 Animator 驱动的动态资源。
+- 同步更新动态扫描测试脚本，新增 FairyGUI 内部动效/组件统计。
+
 ## 1.0.15
 
 ### 修复

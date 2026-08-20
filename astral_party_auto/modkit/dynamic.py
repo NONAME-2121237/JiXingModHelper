@@ -41,6 +41,37 @@ DRAGONBONES_KEYWORDS = (
     "armature",
 )
 
+# FairyGUI 内部组件/动效名中出现这些词时，视为动态 UI 资源候选
+DYNAMIC_FGUI_KEYWORDS = (
+    "anim",
+    "banner",
+    "bg",
+    "card",
+    "cutin",
+    "display",
+    "effect",
+    "float",
+    "glow",
+    "guide",
+    "hover",
+    "light",
+    "loop",
+    "move",
+    "play",
+    "quality",
+    "replace",
+    "reward",
+    "roll",
+    "shake",
+    "show",
+    "sparkle",
+    "star",
+    "switch",
+    "transition",
+    "up",
+    "down",
+)
+
 # TextAsset 动态分类的中文名，便于界面展示
 DYNAMIC_KIND_LABELS = {
     "video": "视频",
@@ -129,6 +160,35 @@ def classify_text_asset(name: str, raw: bytes) -> str | None:
     if raw[:8] == b"\x89PNG\r\n\x1a\n" and b"acTL" in raw[:64]:
         return "apng"
     return None
+
+
+def extract_fairygui_dynamic_names(raw: bytes) -> list[str]:
+    """从 FairyGUI 二进制包里提取疑似动态组件/动效名。
+
+    这类名字不是独立 Unity 对象，而是 FGUI 包内的 MovieClip / 动效组件名；
+    加上包名前缀后可作为「动态图像」候选，方便定位卡牌、横幅等动态 UI。
+    """
+    names: list[str] = []
+    seen: set[str] = set()
+    for raw_name in re.findall(rb"[ -~]{3,}", raw):
+        try:
+            text = raw_name.decode("ascii")
+        except Exception:
+            continue
+        # 去掉二进制里常见的前缀符号，如 ( + # ! 等
+        clean = text.lstrip(" !\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~")
+        if len(clean) < 3 or len(clean) > 80:
+            continue
+        low = clean.lower()
+        if not any(k in low for k in DYNAMIC_FGUI_KEYWORDS):
+            continue
+        # 过滤纯哈希/短内部 ID 和明显非组件名
+        if clean in ("FGUI", "Common", "Font", "atlas0", "atlas0.png"):
+            continue
+        if clean not in seen:
+            seen.add(clean)
+            names.append(clean)
+    return names
 
 
 def sequence_groups_from_names(

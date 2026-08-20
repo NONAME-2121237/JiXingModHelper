@@ -689,20 +689,31 @@ class ModController:
                     except Exception:
                         continue
                     name = str(getattr(data, "m_Name", "") or "")
-                    if name != asset_name:
+                    is_fgui_item = asset_name.startswith(name + "/")
+                    if name != asset_name and not is_fgui_item:
                         continue
                     raw = text_asset_bytes(data)
                     dyn_kind = classify_text_asset(name, raw)
                     if dyn_kind:
                         kind_label = DYNAMIC_KIND_LABELS.get(dyn_kind, dyn_kind)
                         kind_desc = f"{kind_label} · TextAsset 动态资源"
-                        text_preview = (
-                            f"动态资源类型：{kind_label}\n"
-                            f"资源名：{asset_name}\n"
-                            f"原始大小：{len(raw)} 字节"
-                        )
-                        if dyn_kind == "fairygui":
-                            text_preview += "\n这是 FairyGUI 界面包，游戏内动态 UI 图通常由它引用序列帧贴图实现。"
+                        if is_fgui_item and dyn_kind == "fairygui":
+                            item_name = asset_name.split("/", 1)[1]
+                            kind_label = "FairyGUI 动效"
+                            kind_desc = "FairyGUI 包内动态组件/动效 · 随资源包一起加载"
+                            text_preview = (
+                                f"FairyGUI 动效/组件：{item_name}\n"
+                                f"所属资源包：{name}\n"
+                                "游戏内表现为卡牌、横幅等 UI 的动态效果。"
+                            )
+                        else:
+                            text_preview = (
+                                f"动态资源类型：{kind_label}\n"
+                                f"资源名：{asset_name}\n"
+                                f"原始大小：{len(raw)} 字节"
+                            )
+                            if dyn_kind == "fairygui":
+                                text_preview += "\n这是 FairyGUI 界面包，游戏内动态 UI 图通常由它引用序列帧贴图实现。"
                         break
 
             self.selection = {

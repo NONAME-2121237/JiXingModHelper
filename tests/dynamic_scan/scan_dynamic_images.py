@@ -31,6 +31,7 @@ from astral_party_auto.modkit.bundles import (
 from astral_party_auto.modkit.dynamic import (
     SEQUENCE_MIN_FRAMES,
     classify_text_asset,
+    extract_fairygui_dynamic_names,
     sequence_groups_from_names,
     text_asset_bytes,
 )
@@ -74,6 +75,7 @@ def main() -> int:
     anim_clip_rows: list[tuple[str, str]] = []
     animator_rows: list[tuple[str, str]] = []
     text_assets: list[tuple[str, str, bytes]] = []  # bundle, name, raw
+    fairygui_items: list[tuple[str, str]] = []  # bundle, "包名/组件名"
 
     total = len(entries)
     for done, bundle in enumerate(entries, start=1):
@@ -107,6 +109,9 @@ def main() -> int:
                 name = _read_name(obj)
                 raw = text_asset_bytes(data)
                 text_assets.append((bundle.name, name, raw))
+                if classify_text_asset(name, raw) == "fairygui":
+                    for item in extract_fairygui_dynamic_names(raw):
+                        fairygui_items.append((bundle.name, f"{name}/{item}"))
 
         if done % 1000 == 0 or done == total:
             print(f"  扫描进度: {done}/{total}，已见资源名 {sum(len(v) for v in texture_names.values())}", flush=True)
@@ -178,6 +183,10 @@ def main() -> int:
         if not rows:
             print("  （未发现）")
 
+    print(f"\n[FairyGUI 内部动效/组件] 共 {len(fairygui_items)} 个")
+    for bundle_name, name in fairygui_items[:30]:
+        print(f"  {bundle_name}  [{name}]")
+
     # 汇总是否找到动态资源
     found_any = bool(
         video_rows
@@ -185,6 +194,7 @@ def main() -> int:
         or animator_rows
         or sequence_groups
         or any(dynamic_text.values())
+        or fairygui_items
     )
     print("\n===== 汇总 =====")
     print("  视频:", len(video_rows))
@@ -193,6 +203,7 @@ def main() -> int:
     print("  序列帧贴图组:", len(sequence_groups))
     for kind, rows in dynamic_text.items():
         print(f"  {kind}: {len(rows)}")
+    print(f"  fairygui_items: {len(fairygui_items)}")
 
     return 0 if found_any else 2
 
