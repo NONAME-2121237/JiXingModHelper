@@ -352,7 +352,7 @@ class ModController:
             fairygui_count = 0
             sprite_sheet_count = 0
             for bundle, names in block.items():
-                all_names = set(names) | set(self._sprite_sheet_candidates.get(bundle, set()))
+                all_names = set(names) | set(self._sprite_sheet_candidates.get(bundle, set())) | self._sprite_sheet_marked_frames(bundle)
                 for name in all_names:
                     if not self._is_dynamic_valid(bundle, name):
                         continue
@@ -463,8 +463,9 @@ class ModController:
             for bundle in sorted(block.keys(), key=str.lower):
                 # 自动检测出的精灵图候选帧也作为独立动态项
                 candidate_names = sorted(self._sprite_sheet_candidates.get(bundle, set()), key=str.lower)
+                marked_names = sorted(self._sprite_sheet_marked_frames(bundle), key=str.lower)
                 base_names = sorted(block[bundle], key=str.lower)
-                all_names = sorted(set(base_names) | set(candidate_names), key=str.lower)
+                all_names = sorted(set(base_names) | set(candidate_names) | set(marked_names), key=str.lower)
                 for name in all_names:
                     if not self._is_dynamic_valid(bundle, name):
                         continue
@@ -1737,6 +1738,22 @@ class ModController:
     def get_sprite_sheet_animation(self, bundle: str, name: str) -> dict | None:
         params = self._sprite_sheet_annotations.get(self._sprite_sheet_key(bundle, name))
         return dict(params) if params else None
+
+    def _sprite_sheet_marked_frames(self, bundle: str) -> set[str]:
+        prefix = f"{bundle}::"
+        return {
+            key[len(prefix):]
+            for key in self._sprite_sheet_annotations
+            if key.startswith(prefix)
+        }
+
+    def mark_sprite_sheet_frame(self, bundle: str, name: str) -> dict:
+        key = self._sprite_sheet_key(bundle, name)
+        if key not in self._sprite_sheet_annotations:
+            self._sprite_sheet_annotations[key] = {"marked": True}
+            self._save_sprite_sheet_annotations()
+        self._dynamic_sequence_bases = None
+        return self.sprite_sheet_annotations()
 
     def set_sprite_sheet_animation(
         self,

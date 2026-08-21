@@ -451,6 +451,10 @@ class DesktopApi:
         return self.controller.detect_sprite_sheet_frames()
 
     @exposed
+    def mark_sprite_sheet_frame(self, bundle: str, name: str) -> dict:
+        return self.controller.mark_sprite_sheet_frame(bundle, name)
+
+    @exposed
     def get_sprite_sheet_annotations(self) -> dict:
         return self.controller.sprite_sheet_annotations()
 
@@ -474,8 +478,8 @@ class DesktopApi:
         )
 
         params = self.controller.get_sprite_sheet_animation(bundle, name)
-        if not params:
-            raise RuntimeError("请先保存精灵图动画参数。")
+        if not params or not params.get("tile_width"):
+            raise RuntimeError("该帧已标记为精灵图动画，请先填写并保存精灵图参数。")
         path = self.controller.original_bundle_path(bundle)
         if not path:
             raise RuntimeError(f"找不到资源包：{bundle}")
@@ -538,7 +542,11 @@ class DesktopApi:
         if not groups:
             raise RuntimeError("该资源不是序列帧动画组。")
         group = groups[0]
-        frame_names = sorted_sequence_names(group.names)[:120]
+        marked = self.controller._sprite_sheet_marked_frames(bundle)
+        frame_names = [
+            name for name in sorted_sequence_names(group.names)
+            if name not in marked
+        ][:120]
         frames = []
         width = height = 0
         for frame_name in frame_names:

@@ -35,6 +35,8 @@
     characterList: [],
     characterLabels: { bundles: {}, resources: {} },
     spriteSheetAnns: {},
+    frameSelectFrames: [],
+    frameSelectSelected: new Set(),
     selection: null,
     draftIndex: -1,
     pendingMod: null,
@@ -350,6 +352,9 @@
     box.classList.toggle("is-hidden", !isDynamic);
     if (!isDynamic) return;
     const params = state.spriteSheetAnns[spriteSheetKey(sel.bundle, sel.name)] || {};
+    const isSpriteSheet = !!(params && (params.tile_width || params.marked));
+    const frameSelectBtn = $("#ss-frame-select");
+    if (frameSelectBtn) frameSelectBtn.classList.toggle("is-hidden", isSpriteSheet || !(sel.frame_names && sel.frame_names.length));
     const setVal = (id, val) => { const el = $(id); if (el) el.value = val || ""; };
     setVal("#ss-tile-w", params.tile_width);
     setVal("#ss-tile-h", params.tile_height);
@@ -1031,6 +1036,9 @@
     $("#refresh-resource")?.addEventListener("click", refreshResource);
     $("#ss-save")?.addEventListener("click", saveSpriteSheet);
     $("#ss-clear")?.addEventListener("click", clearSpriteSheet);
+    $("#ss-frame-select")?.addEventListener("click", openFrameSelect);
+    $("#frame-select-close")?.addEventListener("click", closeFrameSelect);
+    $("#frame-select-confirm")?.addEventListener("click", confirmFrameSelect);
 
     $("#choose-replacement")?.addEventListener("click", chooseReplacement);
     $("#crop-replacement")?.addEventListener("click", cropReplacement);
@@ -1293,6 +1301,80 @@
       await selectResource(sel.bundle, sel.name);
       await loadResources();
       toast("已清除精灵图动画设置");
+    } catch (_) {}
+  }
+
+  async function openFrameSelect() {
+    const sel = state.selection;
+    if (!sel) return;
+    try {
+      const data = await call("get_sequence_frames", { quiet: true }, sel.bundle, sel.name);
+      state.frameSelectFrames = (data && data.names || []).map((name, i) => ({
+        name,
+        url: (data.frames && data.frames[i]) || ""
+      }));
+      state.frameSelectSelected = new Set();
+      renderFrameSelectGrid();
+      const overlay = $("#frame-select-overlay");
+      if (overlay) overlay.classList.remove("is-hidden");
+      updateFrameSelectCount();
+    } catch (_) {}
+  }
+
+  function renderFrameSelectGrid() {
+    const grid = $("#frame-select-grid");
+    if (!grid) return;
+    grid.innerHTML = "";
+    state.frameSelectFrames.forEach((frame, index) => {
+      const item = document.createElement("div");
+      item.className = "frame-select-item";
+      item.dataset.index = String(index);
+      item.innerHTML = `
+        <img src="${frame.url}" alt="">
+        <span class="frame-name">${escapeHtml(frame.name)}</span>
+        <span class="frame-check"></span>
+      `;
+      item.addEventListener("click", () => {
+        if (state.frameSelectSelected.has(index)) state.frameSelectSelected.delete(index);
+        else state.frameSelectSelected.add(index);
+        renderFrameSelectGrid();
+        updateFrameSelectCount();
+      });
+      if (state.frameSelectSelected.has(index)) item.classList.add("is-selected");
+      grid.appendChild(item);
+    });
+  }
+
+  function updateFrameSelectCount() {
+    const el = $("#frame-select-count");
+    if (el) el.textContent = `已选 ${state.frameSelectSelected.size} 帧`;
+  }
+
+  function closeFrameSelect() {
+    const overlay = $("#frame-select-overlay");
+    if (overlay) overlay.classList.add("is-hidden");
+    state.frameSelectFrames = [];
+    state.frameSelectSelected = new Set();
+  }
+
+  async function confirmFrameSelect() {
+    const sel = state.selection;
+    if (!sel) return;
+    const indexes = Array.from(state.frameSelectSelected);
+    if (!indexes.length) {
+      toast("请至少选择一帧", true);
+      return;
+    }
+    try {
+      for (const index of indexes) {
+        const frame = state.frameSelectFrames[index];
+        if (frame) {
+          state.spriteSheetAnns = await call("mark_sprite_sheet_frame", { quiet: true }, sel.bundle, frame.name);
+        }
+      }
+      closeFrameSelect();
+      toast(`已标记 ${indexes.length} 帧为精灵图动画`);
+      await refreshBrowse();
     } catch (_) {}
   }
 

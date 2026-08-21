@@ -172,6 +172,7 @@
                 <div class="action-row two-up">
                   <button id="ss-save" class="button ghost compact">保存精灵图设置</button>
                   <button id="ss-clear" class="button ghost compact">清除设置</button>
+                  <button id="ss-frame-select" class="button purple compact">选择帧标记精灵图</button>
                 </div>
               </div>
             </aside>
@@ -248,6 +249,18 @@
       <img id="lightbox-image" alt="大图预览" draggable="false">
     </div>
     <div class="lightbox-hint">滚轮缩放 · 拖拽平移 · 点击空白关闭</div>
+  </div>
+
+  <div id="frame-select-overlay" class="lightbox-overlay is-hidden">
+    <div class="lightbox-toolbar">
+      <span class="lightbox-title">选择要标记为精灵图动画的帧</span>
+      <button id="frame-select-close" class="lightbox-close" title="关闭">×</button>
+    </div>
+    <div id="frame-select-grid" class="frame-select-grid"></div>
+    <div class="frame-select-footer">
+      <span id="frame-select-count">已选 0 帧</span>
+      <button id="frame-select-confirm" class="button primary">标记选中帧</button>
+    </div>
   </div>
 
   <div id="crop-modal" class="modal-overlay is-hidden">
